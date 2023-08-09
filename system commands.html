@@ -1,0 +1,3424 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+    table {
+        border-collapse:collapse;
+    }
+
+    table, th, td {
+        border: 1px solid black;
+    }
+
+    table {
+        width: max-content;
+        table-layout: fixed;
+    }
+
+    th {
+        padding: 7px;
+        font-size: 18px;
+    }
+
+    td {
+        padding: 7px;
+        font-size: 16px;
+        line-height: 24px;
+    }
+
+    code {
+        font-family: "Courier New", monospace;
+        background-color: #f1f1f1;
+        padding: 1px;
+        border-radius: 3px;
+    }
+
+    .table-container {
+        width: 100%;
+        overflow-x: auto;
+    }
+
+</style>
+<meta charset="utf-8">
+<title>Command Analysis</title>
+</head>
+<body>
+    <h1 style="text-align:center">OS Commands</h1>
+
+    <h3>Important Notes:</h3>
+    <ol>
+        <li>All commands are tested on Ubuntu 20.04 unless otherwise specified.</li>
+        <li>
+            We igonre all read operations from <code>stdin</code> and all write operations to <code>stdout</code> 
+            when analyzing the core system calls of each command.
+            Because in normal cases, the file types of <code>stdin</code> and <code>stdout</code> are terminal devices, pipes, or 
+            regular files. We do not care about read/write operations from/to terminals and pipes, and read/write 
+            operations from/to files will be catched because <code>Agith</code> monitors file operation system calls.
+            So ignoring read operations from <code>stdin</code> and write operations to <code>stdout</code> when 
+            analyzing the core system calls of a command will not result in the missing of any system calls that should 
+            be monitored. There are some text processing commands, e.g., <code>grep</code>, whose workflow is
+            reading text from <code>stdin</code>, processing the text, and writing the processed result
+            to <code>stdout</code>. For such commands, their "Core System Call(s)" columes are filled with
+            "Ignored <code>stdin</code>/<code>stdout</code> read/write operations", their operation type is 
+            Text Processing, and their System Impact is None.
+        </li>
+        <li>
+            Some shell built-in commands are implemented completely in user space without invoking
+            any system calls, such as <code>set</code>, <code>export</code>, and
+            <code>alias</code>. For such commands, their operation type is User Space Operation, 
+            and their System Impact is None. 
+        </li>
+        <li>
+            If a command has the Process Operation - Create operaion type, it is also like to have 
+            the Process Operation - Modify operation type. Because after a subprocess is created
+            by system calls like <code>clone()</code>, an <code>execve()</code> is often called to 
+            load a new program into the subprocess' memory, and the <code>execve()</code> system 
+            call belongs to the Process Operation - Modify category.
+        </li>
+        <li>
+            The term "device" in this table refers peripherals like storage devices, NICs and GPUs.
+            CPU, memory and firmware are not included in this scope. So for commands that retrieves
+            CPU, memory and firmware information, such as <code>top</code>, <code>lscpu</code>, and
+            <code>dmidecode</code>, their operation type is System Operation instead of 
+            Device Operation.
+        </li>
+        <li>
+			The package managers <code>yum</code> and <code>pip</code> are actually service commands
+			instead of system commands, because they access the package repository serivie. However, 
+			we decide to list them in this table because the most important operations of package 
+			managers are installing files, which are file operations.
+        </li>
+        <!--<li>
+            The creation of processes (e.g., invoking <code>clone()</code>) has different impacts 
+            on the system depending on the scenarios. There are three common scenarios: <br>
+            (1) Some commands utilize multiple processes to achieve their functionality. In this case, we don't 
+            consider the creation of subprocesses modifies system state, because all processes of a 
+            command are treated as a whole. For example, the <code>zless</code> command creates 
+            subprocesses to execute <code>gzip</code> and <code>less</code>, so its operation types
+            contain Process Operation - Create, but this operaion is not considered as a 
+            modification to the system state, so the "System Impact" of <code>zless</code> is "Read-only". <br>
+            (2) Some commands create subprocesses to run daemons/services. In other words the 
+            subporcesses keep runnning after the command exits. In this case, the creation of subprocesses modifies
+            the system state. For example, the <code>nginx</code> command can be used to run the NGINX daemon,
+            so the "System Impact" of <code>nginx</code> is "Modify". <br>
+            (3) Some commands create subprocesses to run user-specified commands. In this case, we 
+            also don't consider the creation of such subprocesses modifies system state. Because this 
+            behavior essentially involves creating a child process to run other operation commands, and
+            we assume the core system calls of "other operation commands" is also analyzed in this table.
+            For example, the <code>su</code> command allows the operator to run a command (shell by default) 
+            with a substitute user, 
+        </li>-->
+        <li>Conventions: &lt;argument&gt; arguments of commands</li>
+    </ol>    
+
+    <div class="table-container">
+    <table>
+        <colgroup>
+            <col style="width: 100px;">
+            <col style="width: 100px;">
+            <col style="width: 250px;">
+            <col style="width: 170px;">
+            <col style="width: 400px;">
+            <col style="width: 500px;">
+            <col style="width: 400px;">
+            <col style="width: 250px;">
+            <col style="width: 300px;">
+        </colgroup>
+        <tr>
+            <th align="middle">Command</th>
+            <th align="middle">Frequency</th>
+            <th align="middle" colspan="2">Functionality (Sub-Functionality)</th>
+            <th align="middle">Command Pattern of Core Functionality</th>
+            <th align="middle">Core System Call(s)</th>
+            <th align="middle">Operation Type</th>
+            <th align="middle">System Impact</th>
+            <th align="middle">Comments</th>
+        </tr>
+
+
+        <tr>
+			<td align="middle" rowspan="2">grep</td>
+			<td align="middle" rowspan="2">452349</td>
+			<td align="middle" rowspan="2">print lines that match patterns</td>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>grep &lt;pattern&gt;</code> (input text then input ctrl+D)</td>
+			<td align="left">
+				ignored <code>stdin</code>/<code>stdout</code> read/write operations
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from file</td>
+			<td align="left"><code>grep &lt;pattern&gt; &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read the contents of the target file for regex matching<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">cd</td>
+			<td align="middle">310389</td>
+			<td align="middle" colspan="2">change working directory</td>
+			<td align="left"><code>cd &lt;dirname&gt;</code></td>
+			<td align="left">
+				<code>chdir()</code> - change the working directory of the calling process
+			</td>
+			<td align="left">Process Operation - Modify</td>
+			<td align="left">Modify (The shell process)</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">su</td>
+			<td align="middle">237580</td>
+			<td align="middle" colspan="2">run a command with substitute user and group ID</td>
+			<td align="left"><code>su -c &lt;command&gt; -g &lt;group&gt; &lt;user&gt;</code></td>
+			<td align="left">
+				<b>parent process:</b><br>
+				<code>openat()</code> &amp; <code>read()</code> - open <code>/etc/passwd</code> and <code>/etc/group</code> to get the
+                mapping between user/group names and uids/gids <br>
+				<code>setgroups()</code> -  set the list of supplementary group IDs to the target group, which will 
+                be inherited by the subprocess (I don't know why this system call is invoked in the 
+                parent process instead of the subprocess)<br>
+				<code>clone()</code> - create subprocess to execute the specified command<br>
+				<br>
+                <b>subprocess:</b><br>
+				<code>setuid()</code> &amp; <code>setgid()</code> - set the effective uid and gid to the target user and group<br>
+				<code>execve("/bin/sh", ["sh", "-c", "command"])</code> - execute the specified command. If no command 
+                is specified, a interactive shell is executed by default<br>
+			</td>
+			<td align="left">
+                File Operation - Read() <br>
+                Process Operation - Create <br>
+                Process Operation - Modify (uid and gid)
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"><code>setgid()</code> sets the effective group ID of the calling process.setgroups sets list of supplementary group IDs. The effective group ID is used for permission checks, while supplementary group IDs are used to grant access to resources owned by supplementary groups.</td>
+		</tr>
+		
+	
+		<tr>
+			<td align="middle" rowspan="2">cat</td>
+			<td align="middle" rowspan="2">156343</td>
+			<td align="middle" rowspan="2">concatenate files and print on the standard output</td>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>cat</code> (input text then input ctrl+D)</td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations
+            </td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from file</td>
+			<td align="left"><code>cat &lt;file&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read contents from the target file
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">ll</td>
+			<td align="middle">88719</td>
+			<td align="middle" colspan="2"><code>ll</code> is an alias of <code>ls</code> with some options, please refer the table entry of <code>ls</code></td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">vim</td>
+			<td align="middle" rowspan="2">69932</td>
+			<td align="middle"rowspan="2">edit files</td>
+            <td align="middle">read file</td>
+			<td align="left"><code>vim &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the file to be edited<br>
+				<code>read()</code> - read contents from the file to be edited and user input
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"><code>vim</code> will generate a temporary file called <code>&lt;filename&gt;.swp</code></td>
+		</tr>
+        <tr>
+            <td align="middle">edit file</td>
+			<td align="left"><code>vim &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the file to be edited<br>
+				<code>read()</code> - read contents from the file to be edited and user input<br>
+				<code>write()</code> - write edited contents back to the file<br>
+				<code>fsync()</code> - synchronize the modified file to the storage device<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">zgrep</td>
+			<td align="middle">61740</td>
+			<td align="middle" colspan="2">search compressed gzip files for a regular expression</td>
+			<td align="left"><code>zgrep &lt;pattern&gt; &lt;gzfilename&gt;</code></td>
+			<td align="left">
+				<code>clone()</code> &amp; <code>execve()</code> - create a subprocess to run <code>gzip</code> (<code>gzip -cdfq filename</code>) to decompress the gzip file<br>
+				<code>clone()</code> &amp; <code>execve()</code> - create a subpproces to run <code>grep</code><br>
+				<code>pipe()</code> &amp; <code>write()</code> &amp; <code>read()</code> - the <code>gzip</code> process will write the extracted data to the pipe and the <code>grep</code> process will read the data for regex matching
+			</td>
+			<td align="left">
+                Process Operation - Create <br>
+                Process Operation - Modify <br>
+                File Operation - Read (<code>gzip</code>) <br>
+                Text Processing (<code>grep</code>)</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">exit</td>
+			<td align="middle">57435</td>
+			<td align="middle" colspan="2">exit the shell</td>
+			<td align="left"><code>exit</code></td>
+			<td align="left">
+				<code>exit</code> is a shell built-in command. After a user enters exit, the shell will perform 
+                some tasks that need to be executed before termination, e.g., updating the <code>.bash_history</code> file 
+                (see the table entry of <code>history</code> for more details), then call <code>exit_group()</code> to stop.<br>
+			</td>
+			<td align="left">Process Operation - Modify (The state of the shell process changes from running to terminated)</td>
+			<td align="left">Modify</td>
+			<td align="left">shell built-in command</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">tail</td>
+			<td align="middle">53248</td>
+			<td align="middle" colspan="2">output the last part of files</td>
+			<td align="left"><code>tail &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read the lines to display from the target file
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">ps</td>
+			<td align="middle">50322</td>
+			<td align="middle" colspan="2">report a snapshot of the current processes</td>
+			<td align="left"><code>ps -ef</code></td>
+			<td align="left">
+				<code>openat()</code> - open files under <code>/proc/&lt;pid&gt;</code> that store process information<br>
+				<code>read()</code> - retrieve process information from the opened files
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">awk</td>
+			<td align="middle" rowspan="2">45656</td>
+			<td align="middle" rowspan="2">pattern scanning and text processing language</td>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>awk &lt;code&gt;</code> (input text then input ctrl+D)</td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from file</td>
+			<td align="left"><code>awk &lt;code&gt; &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read the contents of the target file for processing
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">ls</td>
+			<td align="middle">44385</td>
+			<td align="middle" colspan="2">list dir</td>
+			<td align="left"><code>ls -l dir</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target directory<br>
+				<code>getdents64()</code> - get directory entries<br>
+                <code>lstat()</code> - get file status
+			</td>
+			<td align="left">File Operation - Read (Directories are files)</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">less</td>
+			<td align="middle" rowspan="2">37141</td>
+			<td align="middle" rowspan="2">file viewer that displays file content in a paginated manner</td>
+			<td align="middle">input from file</td>
+			<td align="left"><code>less &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read contents from the target file
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>cat &lt;filename&gt; | less</code></td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations <br>
+				<br>
+				Note if no file name is specified, <code>less</code> will judge the file type 
+                of stdin before reading data from it. If stdin is a terminal, <code>less</code> will return 
+                an error without reading from it; if not, <code>less</code> will read contents from stdin 
+                and display them.
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">export</td>
+			<td align="middle">24849</td>
+			<td align="middle" colspan="2">set an environment variable and make it available to child processes</td>
+			<td align="left"><code>export &lt;variable&gt;=&lt;value&gt;</code></td>
+			<td align="left">
+				This command is a shell built-in command, shell implements this functionality 
+                in user space, so this command does not invoke any system calls.<br>
+			</td>
+			<td align="left">User Space Operation</td>
+			<td align="left">None</td>
+			<td align="left">shell built-in command</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">df</td>
+			<td align="middle">23441</td>
+			<td align="middle" colspan="2">df is used to display information related to file systems about total space and available space.</td>
+			<td align="left"><code>df</code></td>
+			<td align="left">
+				<code>openat()</code> - open <code>/proc/self/mountinfo</code> that stores mount information of storage devices<br>
+				<code>read()</code> - retrieve mount information from the opened file<br>
+				<code>statfs()</code> - get filesystem statistics of mount points<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">echo</td>
+			<td align="middle">21158</td>
+			<td align="middle" colspan="2">output strings to standard output</td>
+			<td align="left"><code>echo &lt;string&gt;</code></td>
+			<td align="left">
+                ignored <code>stdout</code> write operation.
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left">
+                <code>echo</code> is a Bash built-in command [1]. There is an executable binary 
+                with the same name under <code>/usr/bin</code> (in Ubuntu 20.04), but when you enter 
+                the <code>echo</code> command in Bash, Bash will execute the logic of echo 
+                instead of create a subprocess to run <code>/usr/bin/echo</code>. <br>
+                <br> 
+                References: <br>
+                <a href="https://www.gnu.org/savannah-checkouts/gnu/bash/manual/bash.html#index-echo">
+                    https://www.gnu.org/savannah-checkouts/gnu/bash/manual/bash.html#index-echo
+                </a>
+            </td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">wc</td>
+			<td align="middle" rowspan="2">19115</td>
+			<td align="middle" rowspan="2">print newline, word, and byte counts input contents</td>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>wc</code> (input text then input ctrl+D)</td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from file</td>
+			<td align="left"><code>wc &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read contents from the target file
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">sort</td>
+			<td align="middle" rowspan="2">16962</td>
+			<td align="middle" rowspan="2">sort lines of text files</td>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>sort</code> (input text then input ctrl+D)</td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from file</td>
+			<td align="left"><code>sort &lt;file&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read target file contents
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+        
+		<tr>
+			<td align="middle" rowspan="4">ip</td>
+			<td align="middle" rowspan="4">15387</td>
+			<td align="middle" rowspan="4">show / manipulate routing, network devices and interfaces</td>
+			<td align="middle">show the routing table</td>
+			<td align="left"><code>ip route</code></td>
+			<td align="left">
+				<code>socket()</code> - create netlink sockets with NETLINK_ROUTE family, which are used to read the routing table<br>
+				<code>bind()</code> - bind the netlink sockets to local ports<br>
+				<code>sendto()</code> / <code>recvmsg()</code> - retrieve routing entries
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="4">
+                The ip command provides very complex network fuctionalities, except for showing/manipulating 
+                routing table and interfaces, it can also be used for showing/manipulating arp table, 
+                tunnels, tcp metrics in kernel, etc. Despite providing heterogeneous functionalities, the ip 
+                command uses the unified netlink interface to communicate with kernel to implement them.
+            </td>
+		</tr>
+		<tr>
+			<td align="middle">manipulate the routing table</td>
+			<td align="left">
+                <code>sudo ip route add &lt;entry&gt;</code><br>
+                <code>sudo ip route del &lt;entry&gt;</code>
+            </td>
+			<td align="left">
+				<code>socket()</code> - create a netlink socket with NETLINK_ROUTE family, which is used to modify the routing table<br>
+				<code>bind()</code> - bind the netlink socket to a local port<br>
+				<code>sendto()</code> / <code>recvmsg()</code> - modify routing table<br>
+			</td>
+			<td align="left">Network Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+		<tr>
+			<td align="middle">show interfaces</td>
+			<td align="left"><code>ip link</code></td>
+			<td align="left">
+				<code>socket()</code> - create a netlink socket with NETLINK_ROUTE family, which is used to retrieve interface information<br>
+				<code>bind()</code> - bind the netlink socket to a local port<br>
+				<code>sendto()</code> / <code>recvmsg()</code> - retrieve interface information<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+		<tr>
+			<td align="middle">manipulate interfaces</td>
+			<td align="left"><code>ip link set &lt;interface&gt; &lt;option&gt;</code></td>
+			<td align="left">
+				<code>socket()</code> - create netlink sockets with NETLINK_ROUTE family, which are used to manipulate interfaces<br>
+				<code>bind()</code> - bind the netlink sockets to local ports<br>
+				<code>sendto()</code> / <code>recvmsg()</code> - Modify interfaces<br>
+			</td>
+			<td align="left">Device Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">head</td>
+			<td align="middle">14993</td>
+			<td align="middle" colspan="2">output the first part of files</td>
+			<td align="left"><code>head &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read the lines to display from the opened file<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">netstat</td>
+			<td align="middle" rowspan="2">14847</td>
+			<td align="middle" rowspan="2">print network connections, routing tables, interface statistics, masquerade connections, and multicast memberships</td>
+			<td align="middle">show network connections</td>
+			<td align="left"><code>netstat</code></td>
+			<td align="left">
+				<code>openat()</code> - open files under <code>/proc/net/</code> that store network connection information<br>
+				<code>read()</code> - retrieve network connection information from the opened files<br>
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2">
+                This program is mostly obsolete. Replacement for <code>netstat</code> is <code>ss</code>. Replacement for 
+                <code>netstat -r</code> is <code>ip route</code>.
+            </td>
+		</tr>
+		<tr>
+			<td align="middle">show the routing table</td>
+			<td align="left"><code>netstat -r</code></td>
+			<td align="left">
+				<code>openat()</code> - open <code>/proc/net/route</code> that stores routing information<br>
+				<code>read()</code> - read routing information from <code>/proc/net/route</code><br>
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">zcat</td>
+			<td align="middle">14022</td>
+			<td align="middle" colspan="2">uncompresse .gz file and write the uncompressed data to stdout</td>
+			<td align="left"><code>zcat &lt;gzfilename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target .gz file<br>
+				<code>read()</code> - read the contents of the opened file to uncompress
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</Read-></td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">ifconfig</td>
+			<td align="middle" rowspan="2">11991</td>
+			<td align="middle" rowspan="2">configure a network interface</td>
+			<td align="middle">show interface information</td>
+			<td align="left"><code>ifconfig</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store interface information, e.g., <code>/proc/net/dev</code>, <code>/proc/net/if_inet6</code><br>
+				<code>read()</code> - retrieve interface information from the opened files<br>
+				<code>socket()</code> - create an <code>AF_INET</code> and an <code>AF_INET6</code> socket which will be passed as agruments to the subsequent <code>ioctl()</code> <br>
+				<code>ioctl()</code> - retrieve interface information with different request codes, e.g., <code>SIOCGIFCONF</code>, <code>SIOCGIFFLAGS</code>, <code>SIOCGIFFLAGS</code>, <code>SIOCGIFTXQLEN</code>, etc.<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2">The <code>ioctl()</code> interface is old, the newer <code>ip</code> command uses the netlink interface for showing/manipulating interfaces.</td>
+		</tr>
+		<tr>
+			<td align="middle">manipulate interfaces</td>
+			<td align="left"><code>ifconfig &lt;interface&gt; &lt;option&gt;</code></td>
+			<td align="left">
+				<code>socket()</code> - create an <code>AF_INET</code> and an <code>AF_INET6</code> socket which will be passed as arguments to the subsequent <code>ioctl()</code>  <br>
+				<code>ioctl()</code> - use the opposite request code for retriving interface information to manipulate interfaces. For example, the <code>SIOCGIFTXQLEN</code> request code is used for getting the tx queue length of an interface, while the <code>SIOCSIFTXQLEN</code> is used for modifying this value.<br>
+			</td>
+			<td align="left">Device Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">top</td>
+			<td align="middle">11966</td>
+			<td align="middle" colspan="2">display Linux processes</td>
+			<td align="left"><code>top</code></td>
+			<td align="left">
+				<code>openat()</code> - open files under <code>procfs</code> and <code>sysfs</code> that store 
+                information about processes, cpus and memories, e.g., files under <code>/proc/&lt;pid&gt;</code>, 
+                files under <code>/sys/devices/system</code><br>
+				<code>read()</code> - retrieve information from the opened files<br>
+			</td>
+			<td align="left">
+                Process Operation - Read <br>
+                System Operation - Read
+            </td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">smartctl</td>
+			<td align="middle">10102</td>
+			<td align="middle" colspan="2">control and monitor utility for SMART disks</td>
+			<td align="left"><code>smartctl -a &lt;device&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the file corresponding to the target device, e.g., <code>/dev/sda</code>, which will be passed as an argument to the subsequent <code>ioctl()</code><br>
+				<code>ioctl()</code> - use the SG_IO request code to retrieve device information<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">rm</td>
+			<td align="middle" rowspan="2">9454</td>
+			<td align="middle" rowspan="2">remove files or directories</td>
+			<td align="middle">remove file</td>
+			<td align="left"><code>rm &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>newfstatat()</code> - get the status, e.g., file type, of the target file<br>
+				<code>faccessat()</code> - check if the process has write permission for the file<br>
+				<code>unlinkat()</code> - delete the target file<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Delete
+            </td>
+			<td align="left">Modify</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">remove directory</td>
+			<td align="left"><code>rm -r &lt;dirname&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the files/directories to be removed<br>
+				<code>newfstatat()</code> - get the status of the files/directories to be removed<br>
+				<code>getdents64()</code> - get files under directories<br>
+				<code>faccessat()</code> - check if the process has write permission for the files/directories<br>
+				<code>unlinkat()</code> - delete the files/directories<br>
+				<br>
+				Note files do not need to be opened with <code>openat()</code> because <code>unlinkat()</code> 
+                takes file path as its argument. While directories need to be opened with 
+                <code>openat()</code> because <code>getdents64()</code> takes an fd as its argument.<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Delete
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">vi</td>
+			<td align="middle">9435</td>
+			<td align="middle" colspan="2">In Ubuntu 20.04, <code>vi</code> is linked to <code>vim</code>, please refer the table entry of <code>vim</code>.</td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">du</td>
+			<td align="middle">9248</td>
+			<td align="middle" colspan="2">estimate file space usage</td>
+			<td align="left"><code>du -a</code></td>
+			<td align="left">
+				<code>openat()</code> - open directories<br>
+				<code>getdents64()</code> - get directory entries<br>
+				<code>newfstatat()</code> &amp; <code>fstat()</code> - retrieve information about files/directories<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">pwd</td>
+			<td align="middle">8850</td>
+			<td align="middle" colspan="2">print working directory</td>
+			<td align="left"><code>pwd</code></td>
+			<td align="left">
+				<code>getcwd()</code> - get current working directory<br>
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">date</td>
+			<td align="middle" rowspan="2">8245</td>
+			<td align="middle" rowspan="2">print or set the system date and time</td>
+			<td align="middle">get system time</td>
+			<td align="left"><code>date</code></td>
+			<td align="left">
+				<code>clock_gettime()</code> - retrieve system time (Note this is a vdso system call which means we can not capture this system call using strace, but we can capture the glibc wrapper function using ltrace)<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">set system time</td>
+			<td align="left"><code>date -s &lt;time&gt;</code></td>
+			<td align="left">
+				<code>clock_settime()</code> - set system time<br>
+			</td>
+			<td align="left">System Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">view</td>
+			<td align="middle">7958</td>
+			<td align="middle" colspan="2">In Ubuntu 20.04, <code>view</code> is linked to <code>vim</code>, please refer the table entry of <code>vim</code>.</td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">more</td>
+			<td align="middle" rowspan="2">7684</td>
+			<td align="middle" rowspan="2">file viewer, paging through text one screenful at a time</td>
+			<td align="middle">input from file</td>
+			<td align="left"><code>more &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read contents from the target file<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>cat &lt;filename&gt; | more</code></td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations <br>
+				<br>
+				Note if no file name is specified, <code>more</code> will judge the file type of 
+                stdin before reading data from it. If stdin is a terminal, <code>more</code> will return an 
+                error without reading from it; if not, <code>more</code> will read contents from stdin and display them.<br>
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">uniq</td>
+			<td align="middle" rowspan="2">7028</td>
+			<td align="middle" rowspan="2">report or omit repeated lines</td>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>uniq</code> (input text then input ctrl+D)</td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from file</td>
+			<td align="left"><code>uniq &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read the contents of the target file<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">ipvsadm</td>
+			<td align="middle" rowspan="2">6843</td>
+			<td align="middle" rowspan="2">Linux Virtual Server administration tool</td>
+			<td align="middle">list LVS rules</td>
+			<td align="left"><code>ipvsadm -l</code></td>
+			<td align="left">
+				<code>socket()</code> - create NETLINK sockets<br>
+				<code>bind()</code> - bind the netlink sockets to local ports<br>
+				<code>sendmsg()</code> & <code>recvmsg()</code> - retrive LVS rules<br>
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">modify LVS rules</td>
+			<td align="left"><code>ipvsadm -A/-D &lt;rule&gt;</code></td>
+			<td align="left">
+				<code>socket()</code> - create NETLINK sockets<br>
+				<code>bind()</code> - bind the netlink sockets to local ports <br>
+				<code>sendmsg()</code> & <code>recvmsg()</code> - modify LVS rules<br>
+			</td>
+			<td align="left">Network Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+        
+
+		<tr>
+			<td align="middle">find</td>
+			<td align="middle">6478</td>
+			<td align="middle" colspan="2">search for files in a directory hierarchy</td>
+			<td align="left"><code>find &lt;starting-point&gt; &lt;expression&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open directories to get files under them<br>
+				<code>getdents64()</code> - get files under the opened directories<br>
+				<code>newfstatat()</code> - get file status for comparison<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">history</td>
+			<td align="middle">6439</td>
+			<td align="middle" colspan="2">display historical commands</td>
+			<td align="left"><code>history</code></td>
+			<td align="left">
+				<code>history</code> is a shell built-in command. Here we use Bash as an example to explain 
+                how shell maintains historical commands. When a Bash process starts to run, it 
+                calls <code>openat()</code> and <code>read()</code> to retrieve historical commands stored in <code>.bash_history</code> 
+                file under the home directory of the current user. Then Bash maintains all these 
+                historical commands in its memory, which means every time the Bash process 
+                executes a new command, it will record the new command in some data structure 
+                stored in its memory instead of directly writing the new command to the 
+                <code>.bash_history</code> file. When the shell process terminates, it will call 
+                <code>write()</code> to write the historical in its memory back to the 
+                <code>.bash_history</code> file. All the commands executed during this Bash session will be 
+                recorded in the file at this moment, and can be futher accessed by other Bash processes.<br>
+				<br>
+				As we mentioned earlier, <code>history</code> is a shell built-in command instead 
+                of an executable binary, which means we can not run <code>strace</code> like 
+                <code>strace -o log history</code>. We can capture the preceding behavior of Bash by 
+                following steps:<br>
+				1. run <code>strace -o bash.log bash</code> to create a new Bash process<br>
+				2. run some commands in the new Bash<br>
+				3. exit the new Bash using exit or ctrl+D<br>
+				4. examine <code>bash.log</code> to find the aforementioned <code>openat()</code>, 
+                <code>read()</code> and <code>write()</code> system calls to <code>.bash_history</code><br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify</td>
+			<td align="left">shell built-in command</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">tailf</td>
+			<td align="middle">5569</td>
+			<td align="middle" colspan="2">follow the growth of a log file</td>
+			<td align="left"><code>tailf &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read contents from the opened file<br>
+				<code>inotify()</code> + <code>inotify_add_watch()</code> - create an inotify instance and watch the target file<br>
+				<code>read()</code> - read inotify events<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left">
+                tailf is included in util-linux, but it is deprecated and was 
+                removed from util-linux in 2017 
+                (see <a href="https://www.spinics.net/lists/util-linux-ng/msg13779.html">https://www.spinics.net/lists/util-linux-ng/msg13779.html</a>). 
+                To run this command, you have to manually compile the older version 
+                of util-linux.</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">cp</td>
+			<td align="middle" rowspan="2">4753</td>
+			<td align="middle" rowspan="2">copy files and directories</td>
+			<td align="middle">copy files</td>
+			<td align="left"><code>cp &lt;srcfile&gt; &lt;dstfile&gt;</code></td>
+			<td align="left">
+				<code>stat()</code> - get the status of the src file and the dst file<br>
+				<code>openat()</code> - open the src file and the dst file (if the dst file does not exist, create it)<br>
+				<code>read()</code> - read contents from the src file<br>
+				<code>write()</code> - write contents to the dst file<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">copy directories</td>
+			<td align="left"><code>cp &lt;srcdir&gt; &lt;dstdir&gt;</code></td>
+			<td align="left">
+				<code>stat()</code>, <code>fstat()</code>, <code>lstat()</code>, <code>newfstatat()</code> - get status of files/directories<br>
+				<code>mkdir()</code> - create dst directories<br>
+				<code>getdents64()</code> - get files under src directories<br>
+				<code>openat()</code> - open src files and dst files (if the dst files does not exist, create them)<br>
+				<code>read()</code> - read contents from the src files<br>
+				<code>write()</code> - write contents to the dst files<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="3">rpm</td>
+			<td align="middle" rowspan="3">4271</td>
+			<td align="middle" rowspan="3">RPM package manager</td>
+			<td align="middle">show installed rpm packages</td>
+			<td align="left"><code>rpm -qa</code></td>
+			<td align="left">
+				<code>openat()</code> - open the RPM database files of the system, i.e., files under <code>/var/lib/rpm</code><br>
+				<code>pread64()</code> - retrieve installed package information from the RPM database files<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="3">This command is tested on CentOS 8 stream.</td>
+		</tr>
+		<tr>
+			<td align="middle">install an rpm package</td>
+			<td align="left"><code>rpm -i &lt;rpm_pkg&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the RPM package file<br>
+				<code>read()</code> - read the contents of the RPM package<br>
+				<br>
+				<code>openat()</code> - open the RPM database files of the system, i.e., files under <code>/var/lib/rpm</code><br>
+				<code>pread64()</code> - retrieve RPM system information from the RPM database files<br>
+				<br>
+				<code>openat()</code> - create the target files to be installed on the system, but the names of these files have a temporary suffix. For example, if the rpm package contains a binary named cmd which will be installed at <code>/usr/bin/cmd</code>, the <code>openat()</code> system call will create <code>/usr/bin/cmd;xxx</code>, where xxx is a temporary id.<br>
+				<code>write()</code> - write contents to the created target files<br>
+				<code>chown()</code> - set the ownership of the target files<br>
+				<code>chmod()</code> - set the permissions of the target files<br>
+				<code>rename()</code> - rename the files to remove the temporary suffix<br>
+				<br>
+				<code>pwrite64()</code> - update the RPM database files after installation<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+		<tr>
+			<td align="middle">delete an rpm package</td>
+			<td align="left"><code>rpm -e &lt;rpm_pkg&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the RPM database files of the system, i.e., files under <code>/var/lib/rpm</code><br>
+				<code>pread64()</code> - retrieve RPM system information from the RPM database files<br>
+				<code>unlink()</code> - remove the installed files<br>
+				<code>pwrite64()</code> - update the RPM database files after deletion<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Delete <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">lsblk</td>
+			<td align="middle">4191</td>
+			<td align="middle" colspan="2">list block devices</td>
+			<td align="left"><code>lsblk</code></td>
+			<td align="left">
+				<code>openat()</code> - open files in <code>sysfs</code> and <code>procfs</code> that store block device related statistics, e.g. files under <code>/sys/block</code>, files under <code>/sys/dev/block</code>, etc.<br>
+				<code>read()</code> - retrieve block device information from the opened files<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">chroot</td>
+			<td align="middle">4042</td>
+			<td align="middle" colspan="2">run command with specified root directory</td>
+			<td align="left"><code>chroot &lt;newroot&gt; &lt;command&gt;</code></td>
+			<td align="left">
+				<code>chroot()</code> - change the root directory of the current process<br>
+				<code>execve()</code> - execute the specified command<br>
+			</td>
+			<td align="left">Process Operation - Modify</td>
+			<td align="left">Modify</td>
+			<td align="left">can only be executed by the root user</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">dmesg</td>
+			<td align="middle" rowspan="2">3862</td>
+			<td align="middle" rowspan="2">print or control the kernel ring buffer</td>
+			<td align="middle">display messages from the kernel ring buffer</td>
+			<td align="left"><code>dmesg</code></td>
+			<td align="left">
+				<code>openat()</code> - open <code>/dev/kmsg</code><br>
+				<code>read()</code> - read messages from <code>/dev/kmsg</code><br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">clear the ring buffer</td>
+			<td align="left"><code>dmesg -C</code></td>
+			<td align="left">
+				<code>syslog()</code> - the <code>SYSLOG_ACTION_CLEAR</code> command is used to clear the ring buffer<br>
+			</td>
+			<td align="left">System Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<!--<tr>
+			<td align="middle">cc</td>
+			<td align="middle">3712</td>
+			<td align="middle" colspan="2">C compiler (in Ubuntu 20.04 <code>cc</code> is linked to <code>gcc</code>)</td>
+			<td align="left"><code>cc &lt;csourcefile&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the file to be compiled, library files, and the output file<br>
+				<code>read()</code> - read contents from the file to be compiled and library functions<br>
+				<code>vfork()</code> &amp; <code>execve()</code> - <code>gcc</code> is a frontend and it
+                will create subprocesses to run other programs to fishish the whole compilation process. It
+                uses <code>cc1</code> for compiling, <code>as</code> for assembling, and 
+                <code>colltect2</code> and <code>ld</code> for linking. <br>
+                <code>openat()</code> - create the output file e.g., <code>a.out</code> <br>
+                <code>write()</code> - write the ELF format data to the output file<br>
+			</td>
+			<td align="left">
+                Process Operation - Create <br>
+                Process Operation - Modify <br>
+                File Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"><code>gcc</code> is the only program in this table that uses <code>vfork()</code> to create subprocesses</td>
+		</tr>-->
+
+
+		<tr>
+			<td align="middle">mv</td>
+			<td align="middle">3686</td>
+			<td align="middle" colspan="2">move (rename) files</td>
+			<td align="left"><code>mv &lt;srcfilename&gt; &lt;dstfilename&gt;</code></td>
+			<td align="left">
+				<code>renameat2()</code> - change the name or location of the source file<br>
+			</td>
+			<td align="left">
+                File Operation - Delete <br>
+                File Operation - Create
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">free</td>
+			<td align="middle">3658</td>
+			<td align="middle" colspan="2">display amount of free and used memory in the system</td>
+			<td align="left"><code>free</code></td>
+			<td align="left">
+				<code>openat()</code> - open <code>/proc/meminfo</code> which provides a memory usage 
+                report on the system<br>
+				<code>read()</code> - retrieve information from the opened file<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">clear</td>
+			<td align="middle">3160</td>
+			<td align="middle" colspan="2">clear the terminal screen</td>
+			<td align="left"><code>clear</code></td>
+			<td align="left">
+				<code>write()</code>  - write a control sequence to the terminal which 
+                will clean the terminal<br>
+			</td>
+			<td align="left">Device Operation - Modify (Terminals are devices)</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">chmod</td>
+			<td align="middle">2665</td>
+			<td align="middle" colspan="2">change permissions of a file</td>
+			<td align="left"><code>chmod &lt;mode&gt; &lt;file&gt;</code></td>
+			<td align="left">
+				<code>fchmodat()</code> - change permissions of a file<br>
+			</td>
+			<td align="left">File Operation - Write</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">lsscsi</td>
+			<td align="middle">2589</td>
+			<td align="middle" colspan="2">list SCSI and NVMe devices</td>
+			<td align="left"><code>lsscsi</code></td>
+			<td align="left">
+				<code>openat()</code> - open files in <code>sysfs</code> that store device information, e.g. files under <code>/sys/devices</code><br>
+				<code>read()</code> - read device information from the opened files<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">kill</td>
+			<td align="middle">2584</td>
+			<td align="middle" colspan="2">send (term) signal to a process</td>
+			<td align="left"><code>kill &lt;pid&gt;</code></td>
+			<td align="left">
+				<code>kill()</code> - send signal to the target process<br>
+			</td>
+			<td align="left">Process Operation - Modify (Send signal to processes)</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">uptime</td>
+			<td align="middle">2484</td>
+			<td align="middle" colspan="2">tell how long the system has been running.</td>
+			<td align="left"><code>uptime</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that strores system running time (<code>/proc/uptime</code>), system load information (<code>/proc/loadsvg</code>), and login information (<code>/var/run/utmp</code>)<br>
+				<code>read()</code> - retrieve information from the opend files<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">sed</td>
+			<td align="middle" rowspan="2">2388</td>
+			<td align="middle" rowspan="2">A stream editor that is used to perform basic text transformations on an input stream</td>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>sed s/regex/replacement/g</code> (input text then input ctrl+D)</td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from file</td>
+			<td align="left"><code>sed s/regex/replacement/g &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read the contents of the target file for futher processing<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">tar</td>
+			<td align="middle" rowspan="2">2247</td>
+			<td align="middle" rowspan="2">file archiving tool</td>
+			<td align="middle">create a tarball and compress it to a gzip file</td>
+			<td align="left"><code>tar -zcvf &lt;gzfile&gt; &lt;srcdirname&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the files to be compressed<br>
+				<code>fstat()</code> - get file information, e.g., judging the file is a regular file or a directory<br>
+				<code>getdents64()</code> - get file names under directories<br>
+				<code>read()</code> - read the contents the opened files for compressing<br>
+				<code>clone()</code> &amp; <code>execve()</code> - create a subprocess to execute the <code>gzip</code> command (actually the tar process will create a subprocess to run <code>/bin/sh -c gzip</code>, and the shell process will create a subprocess to run the <code>gzip</code> command)<br>
+				<code>creat()</code> - creat the gzfile<br>
+				<code>write()</code> - write the compressed data to the gzfile<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write <br>
+                Process Operation - Create <br>
+                Process Operation - Modify 
+            </td>
+			<td align="left">Modify</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">extract a gz file</td>
+			<td align="left"><code>tar -zxvf &lt;gzfile&gt;</code></td>
+			<td align="left">
+				<code>clone()</code> &amp; <code>execve()</code> - create a subprocess to execute the <code>gzip</code> command<br>
+				<code>openat()</code> - open the gzfile<br>
+				<code>read()</code> - read the contents of the gzfile to decompress<br>
+				<code>mkdirat()</code> - create directories for the extracted data<br>
+				<code>openat()</code> - create files for the extracted data<br>
+				<code>write()</code> - write contents to the created files<br>
+			</td>
+			<td align="left">
+                Process Operation - Create <br>
+                Process Operation - Modify <br>
+                File Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write 
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">set</td>
+			<td align="middle">2131</td>
+			<td align="middle" colspan="2">set or unset shell options and positional parameters</td>
+			<td align="left"><code>set &lt;shell_option&gt;</code></td>
+			<td align="left">
+				This command is a shell built-in command, shell implements this functionality 
+                in user space, so this command does not invoke any system calls.<br>
+			</td>
+			<td align="left">User Space Operation</td>
+			<td align="left">None</td>
+			<td align="left">shell built-in command</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">ethtool</td>
+			<td align="middle" rowspan="2">1979</td>
+			<td align="middle" rowspan="2">A command-line tool in Linux for managing network interface devices (query && set)</td>
+			<td align="middle">show interface information</td>
+			<td align="left"><code>ethtool &lt;interface_name&gt;</code></td>
+			<td align="left">
+				<code>socket()</code> - create an UDP socket which will be passed as an argument to the subsequent <code>ioctl()</code> <br>
+				<code>ioctl()</code> - use the <code>SIOCETHTOOL</code> request code to retrieve interface information<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">manipulate interfaces</td>
+			<td align="left">
+                <code>ethtool -s &lt;interface_name&gt; &lt;option&gt;</code> <br>
+                <code>ethtool -K &lt;interface_name&gt; &lt;option&gt;</code> </td>
+			<td align="left">
+				<code>socket()</code> - create an UDP socket which will be passed as an argument to the subsequent <code>ioctl()</code> <br>
+				<code>ioctl()</code> - use the <code>SIOCETHTOOL</code> request code to manipulate interface<br>
+				<br>
+				Note the <code>ioctl()</code> uses the <code>SIOCETHTOOL</code> request code for 
+                both retriving interface information and manipulating interfaces, the real request 
+                code is stored in the struct ifreq type variable which is the third argument of 
+                <code>ioctl()</code>. Now Linux kernel provides the netlink interface of ethtool 
+                as an alternative for the ioctl interface [1].<br>
+				<br>
+				[1] https://lwn.net/Articles/783633/<br>
+			</td>
+			<td align="left">Device Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">uname</td>
+			<td align="middle">1953</td>
+			<td align="middle" colspan="2">print system information</td>
+			<td align="left"><code>uname -a</code></td>
+			<td align="left">
+				<code>uname()</code> - get system information<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">iptables</td>
+			<td align="middle" rowspan="2">1896</td>
+			<td align="middle" rowspan="2">administration tool for IPv4/IPv6 packet filtering and NAT</td>
+            <td align="middle">list table entries</td>
+			<td align="left"><code>iptables -L</code></td>
+			<td align="left">
+				<code>socket()</code> - create a raw IPv4 socket (<code>SOCK_RAW</code>) which will be 
+                passed as an argument to the subsequent <code>getsockopt()</code><br>
+				<code>getsockopt()</code> - use iptables-related options, e.g., 
+                <code>IPT_SO_GET_INFO</code>, <code>IPT_SO_GET_ENTRIES</code>, etc, to retrieve 
+                in-kernel netfilter entries<br>
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+        <tr>
+            <td align="middle">manipulate table entries</td>
+            <td align="left">
+                <code>iptables -A &lt;entry&gt;</code> <br>
+                <code>iptables -D &lt;entry&gt;</code>
+            </td>
+			<td align="left">
+				<code>socket()</code> - create a raw IPv4 socket (<code>SOCK_RAW</code>) which will 
+                be passed as an argument to the subsequent <code>getsockopt()</code>/<code>setsockopt()</code><br>
+				<code>getsockopt()</code> - use iptables-related options, e.g., <code>IPT_SO_GET_INFO</code>, <code>IPT_SO_GET_ENTRIES</code>, etc, to retrieve in-kernel netfilter entries<br>
+				<code>setsockopt()</code> - use iptables-related options, e.g., <code>IPT_SO_SET_REPLACE</code>, to manipulate in-kernel netfilter entries<br>
+				<br>
+				Note the iptables-related <code>getsockopet()</code>/<code>setsockopt()</code> 
+                options are not well-documented, you can find them in <code>/include/uapi/linux/netfilter_ipv4/ip_tables.h</code> 
+                in Linux kernel source or the corresponding header file, 
+                e.g., <code>/usr/include/linux/netfilter_ipv4/ip_tables.h</code>, 
+                in your Linux distribution.<br>
+			</td>
+			<td align="left">
+                Network Operation - Read <br>
+                Network Operation - Modify
+            </td>
+			<td align="left">Modify</td>
+        </tr>
+
+
+		<tr>
+			<td align="middle">iostat</td>
+			<td align="middle">1861</td>
+			<td align="middle" colspan="2">report CPU statistics and input/output statistics for devices and partitions.</td>
+			<td align="left"><code>iostat</code></td>
+			<td align="left">
+				<code>openat()</code> - open files in <code>sysfs</code> that store I/O device 
+                related statistics, e.g., files under <code>/sys/block/</code> <br>
+				<code>openat()</code> - open files in sysfs that store CPU related statistics, 
+                e.g., files under <code>/sys/devices/system/cpu/</code><br>
+				<code>read()</code> - retrieve information from the opened files<br>
+			</td>
+			<td align="left">
+                Device Operation - Read <br>
+                System Operation - Read
+            </td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">watch</td>
+			<td align="middle">1816</td>
+			<td align="middle" colspan="2">execute a program periodically and show output</td>
+			<td align="left"><code>watch &lt;program&gt;</code></td>
+			<td align="left">
+				<code>clone()</code> - create a subprocess 
+				<code>execve("/bin/sh", ["sh", "-c", "program"])</code> - execute the specified program<br>
+			</td>
+			<td align="left">
+                Process Operation - Create <br>
+                Process Operation - Modify 
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">mkdir</td>
+			<td align="middle">1688</td>
+			<td align="middle" colspan="2">make directories</td>
+			<td align="left"><code>mkdir &lt;dirname&gt;</code></td>
+			<td align="left">
+				<code>mkdir()</code> - create the target directory<br>
+			</td>
+			<td align="left">File Operation - Create</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">lsof</td>
+			<td align="middle">1496</td>
+			<td align="middle" colspan="2">list open files</td>
+			<td align="left"><code>lsof -p &lt;pid&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the files under <code>/proc/&lt;pid&gt;</code> which store the opened file 
+                information of the target process, e.g., <code>/proc/&lt;pid&gt;/cwd</code>, 
+                <code>/proc/&lt;pid&gt;/exe</code>, <code>/proc/&lt;pid&gt;/root</code>, files under <code>/proc/&lt;pid&gt;/fd</code> 
+                and <code>/proc/&lt;pid&gt;/maps</code><br>
+				<code>read()</code> - retrieve information from the opened files<br>
+				<code>readlink()</code> - resolve links for files like <code>/proc/&lt;pid&gt;/exe</code>, <code>/proc/&lt;pid&gt;/cwd</code>, etc.<br>
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">env</td>
+			<td align="middle">1486</td>
+			<td align="middle" colspan="2">list environment variables</td>
+			<td align="left"><code>env</code></td>
+			<td align="left">
+				Enviroment variables is maintained by glibc in the <code>extern char **environ varibale</code> [1], traversing this array is a userspace operation that does not require require any system calls.<br>
+				<br>
+				[1] <code>man 7 environ</code><br>
+			</td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">route</td>
+			<td align="middle" rowspan="2">1466</td>
+			<td align="middle" rowspan="2">show / manipulate the IP routing table</td>
+			<td align="middle">show the routing table</td>
+			<td align="left"><code>route</code></td>
+			<td align="left">
+				<code>openat()</code> - open <code>/proc/net/route</code> that stores routing information<br>
+				<code>read()</code> - retrieve routing information from the opened file<br>
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">manipulate the routing table</td>
+			<td align="left"><code>sudo route add new_entry</code></td>
+			<td align="left">
+				<code>socket()</code> - create an <code>AF_INET</code> socket which will be passed as an argument to the subsequent <code>ioctl()</code><br>
+				<code>ioctl()</code> - the <code>SIOCADDRT</code> and <code>SIOCDELRT</code> request code are used to add and 
+                remove table entries to and from the routing table<br>
+			</td>
+			<td align="left">Network Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+        
+		<tr>
+			<td align="middle" rowspan="2">cut</td>
+			<td align="middle" rowspan="2">1301</td>
+			<td align="middle" rowspan="2">remove sections from each line from input (string process)</td>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>cut &lt;option&gt;</code> (input text then input ctrl+D)</td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from file</td>
+			<td align="left"><code>cut &lt;option&gt; &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read the contents of the target file for processing<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">hostname</td>
+			<td align="middle" rowspan="2">1259</td>
+			<td align="middle" rowspan="2">show or set the system's host name</td>
+            <td align="middle">get host name</td>
+			<td align="left"><code>hostname</code></td>
+			<td align="left">
+				<code>uname()</code> - get system information<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+        <tr>
+            <td align="middle">set host name</td>
+			<td align="left"><code>hostname &lt;name&gt;</code></td>
+			<td align="left">
+				<code>sethostname()</code> - set host name<br>
+			</td>
+			<td align="left">System Operation - Modify</td>
+			<td align="left">Modify</td>
+        </tr>
+
+
+		<tr>
+			<td align="middle">who</td>
+			<td align="middle">1186</td>
+			<td align="middle" colspan="2">show users who are currently logged in</td>
+			<td align="left"><code>who</code></td>
+			<td align="left">
+				<code>openat()</code> - open <code>/var/run/utmp</code>, which stores currently logged in users<br>
+				<code>pread64()</code> - retrieve information about logged in users from the opened file<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">diff</td>
+			<td align="middle">1171</td>
+			<td align="middle" colspan="2">compare files line by line</td>
+			<td align="left"><code>diff &lt;filename1&gt; &lt;filename2&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the files to be compared<br>
+				<code>read()</code> - read the contents of the opened files to compare<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">md5sum</td>
+			<td align="middle">1158</td>
+			<td align="middle" colspan="2">compute and check MD5 message digest</td>
+			<td align="left"><code>md5sum &lt;file&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file <br>
+				<code>read()</code> - read the contents of the opened file to compute MD5<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">ss</td>
+			<td align="middle">1111</td>
+			<td align="middle" colspan="2">a utility to investigate sockets</td>
+			<td align="left"><code>ss -a</code></td>
+			<td align="left">
+				<code>socket()</code> - create netlink sockets with <code>NETLINK_SOCK_DIAG</code> family, 
+                which is used to query information about sockets of various protocol families from the kernel<br>
+				<code>bind()</code> - bind the netlink sockets to local netlink ports<br>
+				<code>sendto()</code> - send query messages<br>
+				<code>recvmsg()</code> - receive query responses<br>
+				<code>openat()</code> - open <code>/proc/&lt;pid&gt;/stat</code> files that store 
+                process related information (ss will display the process names of socket owners)<br>
+				<code>read()</code> - retrieve process related information from the opened files<br>
+			</td>
+			<td align="left">
+                Network Operation - Read <br>
+                Process Operation - Read
+            </td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+		<tr>
+			<td align="middle">java</td>
+			<td align="middle">1020</td>
+			<td align="middle" colspan="2">run java program</td>
+			<td align="left"><code>java &lt;java_filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the executable java file <br>
+				<code>read()</code> - read contents from the opened file <br>
+				<br>
+				The JVM process is created by the <code>clone()</code> invoked by the shell.
+			</td>
+			<td align="left">
+                Process Operation - Create
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+		<tr>
+			<td align="middle">lscpu</td>
+			<td align="middle">936</td>
+			<td align="middle" colspan="2">display information about the CPU architecture</td>
+			<td align="left"><code>lscpu</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store cpu information, e.g., 
+                files under <code>/sys/devices/system/cpu</code>, <code>/proc/cpuinfo</code>, etc.<br>
+				<code>read()</code> - retrieve cpu information from the opened files<br>
+			</td>
+			<td align="left">
+                System Operation - Read
+            </td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">gzip</td>
+			<td align="middle">929</td>
+			<td align="middle" colspan="2">compress a file to gzip format</td>
+			<td align="left"><code>gzip &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file to be compressed<br>
+				<code>openat()</code> - create the gzip file (the name of the gzip file is <code>filename.gz</code>)<br>
+				<code>read()</code> - read the contents of the target file to compress<br>
+				<code>write()</code> - write the compressed data to the gzip file<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">lspci</td>
+			<td align="middle">923</td>
+			<td align="middle" colspan="2">list all PCI devices</td>
+			<td align="left"><code>lspci</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store information of pci devices, 
+                e.g., files under <code>/sys/bus/pci/devices</code><br>
+				<code>openat()</code> - open <code>/usr/share/misc/pci.ids</code> that maps PCI device IDs 
+                to their corresponding vendor and device names<br>
+				<code>read()</code> - retrieve information from the opened files<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">tcpdump</td>
+			<td align="middle">903</td>
+			<td align="middle" colspan="2">dump traffic on a network</td>
+			<td align="left"><code>tcpdump -i <code>interface</code> <code>filter</code></code></td>
+			<td align="left">
+				<code>socket()</code> - create an <code>AF_PACKET</code> socket to receive raw packets<br>
+				<code>bind()</code> - bind the socket to the interface to capture packets on that interface<br>
+				<code>setsockopt()</code> - use the <code>SO_ATTACH_FILTER</code> to attach a filter to the socket<br>
+				<code>recvfrom()</code> - get raw packets<br>
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">base64</td>
+			<td align="middle">900</td>
+			<td align="middle" colspan="2">base64 encode/decode data and print to standard output</td>
+			<td align="left"><code>base64 &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read contents from the opened file for 
+                base64 encode/decode<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">stat</td>
+			<td align="middle" rowspan="2">897</td>
+			<td align="middle" rowspan="2">display file or file system status</td>
+			<td align="middle">stat of a regular file</td>
+			<td align="left"><code>stat &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>lstat()</code> - get information about the specified file<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">stat of filesystem (with -f or --file-system)</td>
+			<td align="left"><code>stat --file-system &lt;filesystem&gt;</code></td>
+			<td align="left">
+				<code>statfs()</code> - get information about the target filesystem<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+        
+
+		<tr>
+			<td align="middle" rowspan="2">sysctl</td>
+			<td align="middle" rowspan="2">866</td>
+			<td align="middle" rowspan="2">read/configure kernel parameters at runtime</td>
+			<td align="middle">read kernel parameters</td>
+			<td align="left"><code>sysctl &lt;kernel_parameter&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the file under <code>/proc/sys</code> that stores 
+                the target kernel parameter<br>
+				<code>read()</code> - read the value of the target kernel parameter from the 
+                opened file<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">modify kernel parameters</td>
+			<td align="left"><code>sysctl -w &lt;kernel_param&gt;=&lt;value&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the file under <code>/proc/sys</code> that stores 
+                the target kernel parameter<br>
+				<code>write()</code> - write the opened file to change the value of the target 
+                kernel parameter<br>
+			</td>
+			<td align="left">System Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">chown</td>
+			<td align="middle">856</td>
+			<td align="middle" colspan="2">change file owner and group</td>
+			<td align="left"><code>chown &lt;owner&gt; &lt;file&gt;</code></td>
+			<td align="left">
+				<code>fchownat()</code> - change ownership of a file<br>
+			</td>
+			<td align="left">File Operation - Write</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">unzip</td>
+			<td align="middle">794</td>
+			<td align="middle" colspan="2">extract zip file</td>
+			<td align="left"><code>unzip &lt;zipfilename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the zip file<br>
+				<code>read()</code> - read the contents of the zip file to decompress<br>
+				<code>mkdir()</code> &amp; <code>openat()</code> - create the extracted files and directories<br>
+				<code>write()</code> - write the decompressed data to the created file<br>
+				<code>fchmod()</code> - change the permissions of the created files<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">last</td>
+			<td align="middle">777</td>
+			<td align="middle" colspan="2">show a listing of last logged in users</td>
+			<td align="left"><code>last</code></td>
+			<td align="left">
+				<code>openat()</code> - open <code>/etc/passwd</code> that stores user information<br>
+				<code>openat()</code> - open <code>/var/log/wtmp</code> that stores all logins and logouts<br>
+				<code>read()</code> - retrieve information from the opened files<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">zless</td>
+			<td align="middle">750</td>
+			<td align="middle" colspan="2">file perusal filter for crt viewing of compressed text</td>
+			<td align="left"><code>zless &lt;gzfilename&gt;</code></td>
+			<td align="left">
+				<code>clone()</code> &amp; <code>execve()</code> - create a subprocess to execue the <code>gzip</code> command 
+                (<code>gzip -cdfq filename</code>) to expand the gzip file<br>
+				<code>clone()</code> &amp; <code>execve()</code> - create a subprocess to execue the <code>less</code> command<br>
+				<code>clone()</code> &amp; <code>execve()</code> - create a subprocess to execue the <code>lesspipe</code> command, 
+                which is the input preprocessor of <code>less</code><br>
+				<code>pipe()</code> &amp; <code>pipe2()</code> &amp; <code>dup2()</code> - inter-process communication<br>
+				<br>
+				For system calls invoked by <code>gzip</code>/<code>gzip</code>, please refer their table entries.<br>
+			</td>
+			<td align="left">
+                Process Operation - Create <br>
+                Process Operation - Modify <br>
+                File Operation - Read (gzip) <br>
+                Text Processing (less)</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">atop</td>
+			<td align="middle">733</td>
+			<td align="middle" colspan="2">a tool for monitoring system resources</td>
+			<td align="left"><code>atop</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store system information, 
+                e.g., <code>/proc/cpuinfo</code>, <code>/proc/vmstat</code>, <code>/proc/meminfo</code>, 
+                files under <code>/proc/&lt;pid&gt;</code>, etc.<br>
+				<code>read()</code> - retrieve information from the opened files<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">sleep</td>
+			<td align="middle">639</td>
+			<td align="middle" colspan="2">delay for a specified amount of time</td>
+			<td align="left"><code>sleep &lt;time&gt;</code></td>
+			<td align="left">
+				<code>clock_nanosleep()</code> - high-resolution sleep with specifiable clock<br>
+			</td>
+			<td align="left">Process Operation - Modify (The state of the shell process changes from running to sleep)</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">egrep</td>
+			<td align="middle" rowspan="2">615</td>
+			<td align="middle" rowspan="2">grep with extended regular expression patterns</td>
+			<td align="middle">for stdin input</td>
+			<td align="left"><code>egrep &lt;pattern&gt;</code> (input text then input ctrl+D)</td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">for file input</td>
+			<td align="left"><code>egrep &lt;pattern&gt; &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read the contents of the target file for regex matching<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="3">yum</td>
+			<td align="middle" rowspan="3">610</td>
+			<td align="middle" rowspan="3">the package manager for RPM-based Linux distributions.</td>
+			<td align="middle">show installed packages</td>
+			<td align="left"><code>yum list installed</code></td>
+			<td align="left">
+				<code>openat()</code> - open the DNF and RPM database files of the system, i.e., 
+                files under <code>/var/lib/dnf</code> and <code>/var/lib/rpm</code><br>
+				<code>pread64()</code> - retrieve installed package information from the DNF database files <br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="3">This command is tested on CentOS 8 stream. In this distribution, <code>yum</code> is linked to <code>dnf</code>.</td>
+		</tr>
+		<tr>
+			<td align="middle">install a package</td>
+			<td align="left"><code>yum install &lt;package&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the RPM and DNF database files of the system, 
+                i.e., files under <code>/var/lib/dnf</code> and <code>/var/lib/rpm</code><br>
+				<code>pread64()</code> - retrieve RPM and DNF system information from the opened files<br>
+				<br>
+				<code>openat()</code> &amp; <code>read()</code> - open <code>/etc/resolv.conf</code> and retrieve DNS resolver information <br>
+				<code>socket()</code> - create an UDP socket<br>
+				<code>connect()</code> - connect the UDP socket to the resolver<br>
+				<code>sendmmsg()</code> &amp; <code>recvfrom()</code> - perform a DNS query to get the IP address of the yum repository's domain name<br>
+				<br>
+				<code>socket()</code> - create a TCP socket<br>
+				<code>connect()</code> - connect the TCP socket to the 443 port of the yum repository <br>
+				<code>write()</code> &amp; <code>read()</code> - communicate with the the repository the get the rpm package<br>
+				<br>
+				<code>openat()</code> - create a temporary file to storage the RPM package data<br>
+				<code>write()</code> - write the downloaded data to the temporary rpm file<br>
+				<br>
+				<code>openat()</code> - open the RPM package file<br>
+				<code>read()</code> - read the contents of the RPM package<br>
+				<br>
+				<code>openat()</code> - create the target files to be installed on the system, but the 
+                names of these files have a temporary suffix. For example, if the rpm 
+                package contains a binary named <code>cmd</code> which will be installed at 
+                <code>/usr/bin/cmd</code>, the <code>openat()</code> system call will 
+                create <code>/usr/bin/cmd;xxx</code>, where xxx is a temporary id.<br>
+				<code>write()</code> - write contents to the created target files<br>
+				<code>chown()</code> - set the ownership of the target files<br>
+				<code>chmod()</code> - set the permissions of the target files<br>
+				<code>rename()</code> - rename the files to remove the temporary suffix<br>
+				<br>
+				<code>pwrite64()</code> - update the RPM and DNF database files after installation<br>
+				<br>
+				<code>unlink()</code> - remove the temporary RPM package after installation<br>
+			</td>
+			<td align="left">
+                File Operation - Read (RPM and DNF database files) <br>
+                File Operation - Create <br>
+                File Operation - Write <br>
+                File Operation - Delete (The temporary file)
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+		<tr>
+			<td align="middle">delete an rpm package</td>
+			<td align="left"><code>yum remove &lt;package&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the RPM and DNF database files of the system, 
+                i.e., files under <code>/var/lib/dnf</code> and <code>/var/lib/rpm</code><br>
+				<code>pread64()</code> - retrieve RPM and DNF system information from the opened files<br>
+				<code>unlink()</code> - remove the installed files<br>
+				<code>pwrite64()</code> - update the RPM and DNF database files after deletion<br>
+			</td>
+			<td align="left">
+                File Operation - Read (RPM and DNF database files) <br>
+                File Operation - Delete
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">nginx</td>
+			<td align="middle">610</td>
+			<td align="middle" colspan="2">run the NGINX daemon</td>
+			<td align="left"><code>nginx</code></td>
+			<td align="left">
+				<code>clone()</code> & <code>execve()</code> - clone a subprocess to run NGINX (<code>clone()</code> is invoked by the shell)<br>
+			</td>
+			<td align="left">
+                Process Operation - Create
+            </td>
+			<td align="left">Modify</td>
+			<td align="left">
+				The <code>nginx</code> command can also be used to change status of a 
+				running nginx daemon. In this case, <code>nginx</code> is a service command, 
+				so it also has an entry in the service commands table.
+			</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">dnstop</td>
+			<td align="middle">541</td>
+			<td align="middle" colspan="2">capture and analyze DNS traffic</td>
+			<td align="left"><code>dnstop &lt;interface&gt;</code></td>
+			<td align="left">
+				<code>socket()</code> - create an <code>AF_PACKET</code> socket to receive raw packets<br>
+				<code>bind()</code> - bind the socket to the interface to capture packets on that interface<br>
+				<code>setsockopt()</code> - use the <code>SO_ATTACH_FILTER</code> to attach a filter to the socket<br>
+				<code>setsockopt()</code> &amp; <code>mmap()</code> - use <code>PACKET_RX_RING</code> to enable packet mmap which 
+                means the captured packets can be accessed by reading memory instead of issuing a system call<br>
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">perf</td>
+			<td align="middle">540</td>
+			<td align="middle" colspan="2">performance analysis tools for Linux</td>
+			<td align="left">
+                <code>perf [OPTIONS] COMMAND [ARGS]</code> <br>
+                <code>e.g. perf stat ls</code>
+            </td>
+			<td align="left">
+				<code>perf_event_open()</code> - set up performance monitoring<br>
+				<code>read()</code> / <code>mmap()</code> -  <code>read()</code> is used to gather counting event results. <code>mmap()</code> is used to access measurements that periodically written to a buffer for sampling events.
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+		<tr>
+			<td align="middle">alias</td>
+			<td align="middle">496</td>
+			<td align="middle" colspan="2">define command alias</td>
+			<td align="left"><code>alias &lt;command_alias&gt;=&lt;command&gt;</code></td>
+			<td align="left">
+				This command is a shell built-in command, shell implements this functionality 
+                in user space, so this command does not invoke any system calls.<br>
+			</td>
+			<td align="left">User Space Operation</td>
+			<td align="left">None</td>
+			<td align="left">shell built-in command</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">touch</td>
+			<td align="middle" rowspan="2">489</td>
+			<td align="middle" rowspan="2">change file time stamps; create empty file</td>
+			<td align="middle">create file</td>
+			<td align="left"><code>touch file</code></td>
+			<td align="left">
+				<code>openat()</code> - use <code>O_CREAT</code> flag to create the new file<br>
+			</td>
+			<td align="left">File Operation - Create</td>
+			<td align="left">Modify</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">change file timestamps</td>
+			<td align="left"><code>touch -a file</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file (O_CREAT is also set)<br>
+				<code>utimensat()</code> - change the timestamp of the target file<br>
+			</td>
+			<td align="left">File Operation - Write</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">lsmod</td>
+			<td align="middle">474</td>
+			<td align="middle" colspan="2">show module status</td>
+			<td align="left"><code>lsmod</code></td>
+			<td align="left">
+				<code>openat()</code> - open files under <code>/sys/module</code> that store module information<br>
+				<code>read()</code>, <code>getdents64()</code> - read module information from the opened files<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">which</td>
+			<td align="middle">443</td>
+			<td align="middle" colspan="2">locate a command</td>
+			<td align="left"><code>which filename</code></td>
+			<td align="left">
+				<code>which</code> command is a shell script, we can read its source code using 
+                commands like <code>vim /usr/bin/which</code>. The source codes shows 
+                <code>which</code> will traverse each directory in the <code>PATH</code> variable 
+                until it finds the target file exists in a directory. <code>which</code> will 
+                concatenate the directories in the PATH variable and the target file name to 
+                form the full file path, and shell will invoke the <code>stat()</code> system 
+                call to judge whether the file exists.<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">openssl</td>
+			<td align="middle">424</td>
+			<td align="middle">OpenSSL command line tool</td>
+			<td align="middle"></td>
+			<td align="left">
+                <code>openssl enc &lt;cipher&gt; -in &lt;inputfile&gt; -out &lt;outputfile&gt; -k &lt;key&gt;</code> <br>
+                <br>
+                <code>openssl</code> provides various functions related to cryptography, including key 
+                management, certificate creation, encryption and decryption, digest calculation, 
+                etc. It's hard to analyze these heterogeneous functions case by case. However, 
+                the most important logic of <code>openssl</code> is cryptography, which is implemented in 
+                user space, and the key system calls of <code>openssl</code> are file operations 
+                which are used for input and output. So we use the data encryption function 
+                as a representation to show what file operation system calls are invoked.
+            </td>
+			<td align="left">
+				<code>openat()</code> - open the input file and the output file<br>
+				<code>read()</code> - read the contents of the input file to encrypt<br>
+				<code>write()</code> - write the encrypted data to the output file<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+		
+
+		<tr>
+			<td align="middle" rowspan="2">mount</td>
+			<td align="middle" rowspan="2">421</td>
+			<td align="middle" rowspan="2">mount a filesystem</td>
+			<td align="middle">get mount information</td>
+			<td align="left"><code>mount</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store mount information, 
+                e.g., <code>/proc/self/mountinfo</code> and <code>/run/mount/utab</code><br>
+				<code>read()</code> - retrieve mount information from the opened files<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">mount filesystem</td>
+			<td align="left"><code>sudo mount -t &lt;type&gt; &lt;device&gt; &lt;dir&gt;</code></td>
+			<td align="left">
+				<code>mount()</code> - mount the device with the specified file system onto 
+                the target dir<br>
+				<br>
+				If the -t option is not used, mount will try to judge the file system type 
+                by reading and analyzing the contents of the device to be mounted.<br>
+			</td>
+			<td align="left">System Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">nsenter</td>
+			<td align="middle">381</td>
+			<td align="middle" colspan="2">run program in different namespaces. With nsenter, you can run a command in the namespace of a running process, effectively giving you access to that process' environment.</td>
+			<td align="left"><code>sudo nsenter -t &lt;target_pid&gt; -a &lt;command&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open files under <code>/proc/&lt;target_pid&gt;/ns</code>, which 
+                are the namespace files of the target process<br>
+				<code>setns()</code> - set the namespaces of the current process to the 
+                target namespaces through the opened namespace files<br>
+				<code>clone()</code> - clone a subprocess which inherits the namespaces<br>
+				<code>execve()</code> - execute the target program in the subprocess<br>
+			</td>
+			<td align="left">
+                Process Operation - Modify <br>
+                Process Operation - Create
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">tr</td>
+			<td align="middle">354</td>
+			<td align="middle">translate or delete characters</td>
+			<td align="middle">read from stdin</td>
+			<td align="left">
+                <code>tr &lt;operand&gt;</code> (input text then input ctrl+D) <br>
+                <br>
+                (Unlike other text processing commands, tr does not provide options 
+                to process files. If you want to process contents of a file, do input 
+                redirection or pipe operation.)
+            </td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left"></td>
+		</tr>
+		
+		<tr>
+			<td align="middle">jmap</td>
+			<td align="middle">290</td>
+			<td align="middle" colspan="2">prints shared object memory maps or heap memory details for a process</td>
+			<td align="left"><code>jmap &lt;pid&gt;</code></td>
+			<td align="left">
+				<code>ptrace()</code> - trace the specified process to get its runtime information
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+		<tr>
+			<td align="middle">named-checkconf</td>
+			<td align="middle">281</td>
+			<td align="middle" colspan="2">check the syntax of a named configuration file</td>
+			<td align="left"><code>named-checkconf &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the configuration file to be checked<br>
+				<code>read()</code> - read the contents of the opened configuration 
+                file for syntax checking<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">fdisk</td>
+			<td align="middle" rowspan="2">273</td>
+			<td align="middle" rowspan="2">Display or manipulate a disk partition table.</td>
+			<td align="middle">list the partitions of the specified disk</td>
+			<td align="left"><code>fdisk -l</code></td>
+			<td align="left">
+				<code>openat()</code> - open the device file corresponding to the specified disk, e.g., <code>/dev/sda</code><br>
+				<code>ioctl()</code> - use request codes like <code>BLKPBSZGET</code>, <code>BLKSSZGET</code> and 
+                <code>BLKGETSIZE64</code> to get information about the disk<br>
+				<code>read()</code> - read the partition table from the disk to get its partition information<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">manipulate the partition table of a disk</td>
+			<td align="left"><code>fdisk &lt;device&gt;</code> (input interactive commands)</td>
+			<td align="left">
+				<code>openat()</code> - open the device file corresponding to the specified disk, e.g., <code>/dev/sda</code><br>
+				<code>ioctl()</code> - use request codes like <code>BLKPBSZGET</code>, <code>BLKSSZGET</code> and <code>BLKGETSIZE64</code> 
+                to get information about the disk<br>
+				<code>read()</code> - read the partition table from the disk to memory (as the prompt of <code>fdisk</code> says: 
+                Changes will remain in memory only, until you decide to write them. Be careful before using the write command.)<br>
+				<code>write()</code> - write the manipulated partition table back to the disk<br>
+				<code>ioctl()</code> - use the <code>BLKRRPART</code> request code to force the kernel to reread the partition table<br>
+				<code>fsync()</code> &amp; <code>sync()</code> - synchronize the in-kernel state to the disk<br>
+			</td>
+			<td align="left">
+                Device Operation - Read <br>
+                Device Operation - Write
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+		
+
+		<tr>
+			<td align="middle" rowspan="2">nvidia-smi</td>
+			<td align="middle" rowspan="2">261</td>
+			<td align="middle" rowspan="2">NVIDIA System Management Interface. NVSMI provides monitoring information for Tesla and select Quadro devices.</td>
+			<td align="middle">retrieve device information</td>
+			<td align="left"><code>nvidia-smi</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store nvidia driver information, 
+                e.g., files under <code>/proc/driver/nvidia</code> and <code>/proc/modules</code><br>
+				<code>read()</code> - retrieve nvidia driver information from the opened files<br>
+				<code>openat()</code> - open device files created by nvidia drivers, e.g., <code>/dev/nvidia-ctl</code> 
+                (the general user space control interface), <code>/dev/nvidia-uvm</code> (the Nvidia Unified Virtual 
+                Memory interface) and <code>/dev/nvidia&lt;n&gt;</code> (the device files correspond to each device), 
+                which will be passed as arguments to the subsequent <code>ioctl()</code><br>
+				<code>ioctl()</code> - using Nvidia-specific request codes (the codes are in hex format like <code>_IOC(_IOC_READ|_IOC_WRITE, 0x46, 0xd2, 0x48)</code>) to set device parameters<br>
+            </td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">set device parameters</td>
+			<td align="left"><code>nvidia-smi -i &lt;device_id&gt; &lt;set_option&gt; &lt;set_argument&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store nvidia driver information, e.g., 
+                files under <code>/proc/driver/nvidia</code> and <code>/proc/modules</code><br>
+				<code>read()</code> - retrieve nvidia driver information from the opened files<br>
+				<code>openat()</code> - open device files created by nvidia drivers, e.g., <code>/dev/nvidia-ctl</code>, 
+                <code>/dev/nvidia-uvm</code> and <code>/dev/nvidia&lt;n&gt;</code> (the target device), which will be 
+                passed as arguments to the subsequent <code>ioctl()</code><br>
+				<code>ioctl()</code> - using Nvidia-specific request codes (the codes are in hex format like <code>_IOC(_IOC_READ|_IOC_WRITE, 0x46, 0xc9, 0x4)</code>) to set device parameters<br>
+			</td>
+			<td align="left">
+                Device Operation - Read <br>
+                Device Operation - Modify
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+		
+        
+		<tr>
+			<td align="middle">dmidecode</td>
+			<td align="middle">252</td>
+			<td align="middle" colspan="2">DMI table decoder</td>
+			<td align="left"><code>dmidecode</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store DMI information, 
+                e.g., <code>/sys/firmware/dmi/tables/smbios_entry_point</code>, 
+                <code>/sys/firmware/dmi/tables/DMI</code><br>
+				<code>read()</code> - retrieve DMI information from the opened files<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left">The FILES section in <code>man 8 dmidecode</code> describes the 
+            files used to retrieve DMI information</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">time</td>
+			<td align="middle">251</td>
+			<td align="middle" colspan="2">run programs and summarize system resource usage</td>
+			<td align="left"><code>time &lt;program&gt;</code></td>
+			<td align="left">
+				<code>clone()</code> &amp; <code>execve()</code> - create a child process to run the target program<br>
+				<code>wait4()</code> - wait the child process to stop<br>
+			</td>
+			<td align="left">
+                Process Operation - Create <br>
+                Process Operation - Modify 
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">arp</td>
+			<td align="middle" rowspan="2">203</td>
+			<td align="middle" rowspan="2">manipulate the system ARP cache</td>
+			<td align="middle">show the arp table</td>
+			<td align="left"><code>arp</code></td>
+			<td align="left">
+				<code>openat()</code> - open <code>/proc/net/arp</code> that stores the arp table<br>
+				<code>read()</code> - retrieve arp table entries from the opened file<br>
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">manipulate the arp table</td>
+			<td align="left"><code>sudo arp -s &lt;IP_addr&gt; &lt;MAC_addr&gt;</code></td>
+			<td align="left">
+				<code>socket()</code> - create an <code>AF_INET</code> socket which will be passed as an argument to the subsequent <code>ioctl()</code><br>
+				<code>ioctl()</code> - use the <code>SIOCSARP/SIOCDARP</code> request codes to set/delete entries in the ARP cache<br>
+			</td>
+			<td align="left">Network Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">ulimit</td>
+			<td align="middle" rowspan="2">201</td>
+			<td align="middle" rowspan="2">get/set resource limits of the shell, which is inherited by subprocesses</td>
+			<td align="middle">get resource limit</td>
+			<td align="left"><code>ulimit -a</code></td>
+			<td align="left">
+				<code>prlimit64()</code> - get the resource limit of the calling process<br>
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2">shell built-in command</td>
+		</tr>
+		<tr>
+			<td align="middle">set resource limit</td>
+			<td align="left"><code>ulimit &lt;option&gt; &lt;limit&gt;</code> (e.g. ulimit -n 1000)</td>
+			<td align="left">
+				<code>prlimit64()</code> - set the resource limit of the calling process<br>
+			</td>
+			<td align="left">Process Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">package-cleanup</td>
+			<td align="middle">199</td>
+			<td align="middle" colspan="2">clean up locally installed, duplicate, or orphaned RPM packages</td>
+			<td align="left"><code>package-cleanup option</code></td>
+			<td align="left">
+				In the test system (CentOS 8 Stream), the package-cleanup command is linked to 
+                <code>/usr/libexec/dnf-utils</code>, which is a python script that calls DNF 
+                functionalities. Please refer the table entry of <code>yum</code> 
+                (<code>yum</code> is a link to <code>dnf</code> in the test system) for more details on how 
+                DNF removes packages.<br>
+			</td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">iptables-save</td>
+			<td align="middle">171</td>
+			<td align="middle" colspan="2">dump iptables rules</td>
+			<td align="left"><code>iptables -f &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>socket()</code> &amp; <code>getsockopt()</code> - retrieve iptables entries, see the table entry of <code>iptables</code> for more details<br>
+				<code>openat()</code> &amp; <code>write()</code> - open or create the target file and write the iptables entries to it<br>
+			</td>
+			<td align="left">
+                Network Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write
+            </td>
+			<td align="left">Modify (File creation and write)</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">ldd</td>
+			<td align="middle">168</td>
+			<td align="middle" colspan="2">print shared object dependencies</td>
+			<td align="left"><code>ldd &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>clone()</code> - create subprocesses<br>
+				<code>execve()</code> - run <code>/lib64/ld-linux-x86-64.so.2</code> to get 
+                dependencies of the target binary file (<code>LD_TRACE_LOADED_OBJECTS=1</code> 
+                contained in <code>envp</code>)<br>
+                <br>
+                in the <code>/lib64/ld-linux-x86-64.so.2</code> process: <br>
+				<code>openat()</code> - open the binary file<br>
+				<code>read()</code> - read the contents of the binary file to analyze its dependency<br>
+			</td>
+			<td align="left">
+                Process Operation - Create <br>
+                Process Operation - Modify <br>
+                File Operation - Read
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">named-checkzone</td>
+			<td align="middle">163</td>
+			<td align="middle" colspan="2">check the syntax and integrity of a zone file</td>
+			<td align="left"><code>named-checkzone <zonename> <filename></code></td>
+			<td align="left">
+				<code>openat()</code> - open the configuration file to be checked<br>
+				<code>read()</code> - read the contents of the opened configuration file for checking<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">whereis</td>
+			<td align="middle">161</td>
+			<td align="middle" colspan="2">locate the binary, source, and manual page files for a command</td>
+			<td align="left"><code>whereis &lt;command&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open directories that may store the files related to 
+                the input command, e.g., <code>/usr/bin</code>, <code>/usr/local/bin</code>, etc. <br>
+				<code>getdents64()</code> - get files under the opened directories to locate the target command<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">addr2line</td>
+			<td align="middle">158</td>
+			<td align="middle" colspan="2">convert addresses into file names and line numbers</td>
+			<td align="left"><code>addr2line -e &lt;filename&gt; &lt;address&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open target file<br>
+				<code>read()</code> - read target file<br>
+				<code>lseek()</code> - used to move file offset when parsing the ELF file<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">pidstat</td>
+			<td align="middle">155</td>
+			<td align="middle" colspan="2">report statistics of processes</td>
+			<td align="left"><code>pidstat -p &lt;pid&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store process information, 
+                e.g., files under <code>/sys/devices/system/cpu</code>, <code>/proc/stat</code>, 
+                files under <code>/proc/&lt;pid&gt;</code>, etc.<br>
+				<code>read()</code> - get statistics of the target process from the opened files<br>
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">zip</td>
+			<td align="middle">147</td>
+			<td align="middle" colspan="2">compress files</td>
+			<td align="left"><code>zip -r &lt;zipfilename&gt; &lt;srcdir&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> &amp; <code>getdents64()</code> - open directories to be compressed 
+                and get files under them<br>
+				<code>openat()</code> - open files to be compressed<br>
+				<code>read()</code> - read the contents of the opened files to compress<br>
+				<code>openat()</code> - create a temporary file<br>
+				<code>write()</code> - write the compressed content to the temporary file<br>
+				<code>rename()</code> - rename the temporary file to the specified file name<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write <br>
+                File Operation - Delete (rename())
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">ln</td>
+			<td align="middle" rowspan="2">141</td>
+			<td align="middle" rowspan="2">make links between file</td>
+			<td align="middle">hard link</td>
+			<td align="left"><code>ln &lt;filename&gt; &lt;linkname&gt;</code></td>
+			<td align="left">
+				<code>linkat()</code> - create hard link<br>
+			</td>
+			<td align="left">File Operation - Create</td>
+			<td align="left">Modify</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">symbolic link</td>
+			<td align="left"><code>ln -s &lt;filename&gt; &lt;linkname&gt;</code></td>
+			<td align="left">
+				<code>symlinkat()</code> - create symbolic link<br>
+			</td>
+			<td align="left">File Operation - Create</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">pidof</td>
+			<td align="middle">138</td>
+			<td align="middle" colspan="2">find the pid of a running program by name</td>
+			<td align="left"><code>pidof &lt;process_name&gt;</code></td>
+			<td align="left">
+				<code>chdir()</code> - change working directory to <code>/proc</code><br>
+				<code>openat()</code> &amp; <code>getdents64()</code> - open <code>.</code> (<code>/proc</code>) and get 
+                all <code>/proc/&lt;pid&gt;</code> directories under <code>/proc</code> <br>
+				<code>openat()</code> - open <code>/proc/&lt;pid&gt;/stat</code> and 
+                <code>/proc/&lt;pid&gt;/cmdline</code> that store names of processes<br>
+				<code>read()</code> - retrieve process names from the opened files<br>
+				<code>readlink()</code> - resolve the symbolic links of <code>/proc/&lt;pid&gt;/exe</code> 
+                to get the names of executed binaries of processes<br>
+				<br>
+				The retrieved process name information is used to match the input process name.<br>
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">taskset</td>
+			<td align="middle" rowspan="2">136</td>
+			<td align="middle" rowspan="2">set or retrieve a process's CPU affinity</td>
+			<td align="middle">getting affinity</td>
+			<td align="left"><code>taskset -p &lt;pid&gt;</code></td>
+			<td align="left">
+				<code>sched_getaffinity()</code> - get CPU affinity of the target process<br>
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">run command with specific affinity</td>
+			<td align="left"><code>taskset &lt;mask&gt; &lt;command&gt;</code></td>
+			<td align="left">
+				<code>sched_setaffinity()</code> - set CPU affinity of the current process<br>
+				<code>execve()</code> - run the specified command
+			</td>
+			<td align="left">
+                Process Operation - Modify
+            </td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">iotop</td>
+			<td align="middle">135</td>
+			<td align="middle" colspan="2">simple top-like I/O monitor</td>
+			<td align="left"><code>sudo iotop</code></td>
+			<td align="left">
+				<code>openat()</code> &amp; <code>getdents64()</code> - open <code>/proc</code> and get 
+                all <code>/proc/&lt;pid&gt;</code> directories under <code>/proc</code> <br>
+				<code>openat()</code> - open files that store processes' I/O usage information, 
+                e.g. <code>/proc/&lt;pid&gt;/status</code>, <code>/proc/&lt;pid&gt;/cmdline</code> 
+                and <code>/proc/&lt;pid&gt;/task</code> <br>
+				<code>openat()</code> - open <code>/proc/vmstat/</code> that stores virtual memory statistics<br>
+				<code>read()</code> - retrieve information from the opened files.<br>
+				<code>ioprio_get()</code> - get I/O scheduling class and priority<br>
+				<code>sched_getscheduler()</code> - get scheduling policy/parameters<br>
+				<code>getpriority()</code> - get program scheduling priority<br>
+			</td>
+			<td align="left">
+                System Operation - Read <br>
+                Process Operation - Read
+            </td>
+			<td align="left">Read-only</td>
+			<td align="left"><code>iotop</code> is a python script</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">lvs</td>
+			<td align="middle">133</td>
+			<td align="middle" colspan="2">Display information about logical volumes</td>
+			<td align="left"><code>lvs</code></td>
+			<td align="left">
+				<code>openat()</code> &amp; <code>getdents64()</code> - get device files under <code>/dev/disk/by-id</code>, which 
+                contain all logical volumes (with <code>dm-</code> prefix which means they are device mapper devices)<br>
+				<code>openat()</code> &amp; <code>read()</code> - open files under <code>/sys/devices/virtual/block/&lt;dm-x&gt;</code> 
+                and retrieve information about logical volumes like their uuid<br>
+				<code>stat()</code> - get information about logical volume devices<br>
+				<code>openat()</code> - open <code>/dev/mapper/control</code> which will be passed as an argument to the subsequent <code>ioctl()</code><br>
+				<code>ioctl()</code> - use the <code>DM_DEV_STATUS</code>/<code>DM_TABLE_STATUS</code> request codes 
+                to retrieve information of logical volumes<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">numactl</td>
+			<td align="middle" rowspan="2">131</td>
+			<td align="middle" rowspan="2">None</td>
+			<td align="middle">show information of NUMA nodes</td>
+			<td align="left"><code>numactl --hardware</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that stores NUMA nodes information 
+                of the host, i.e., files under <code>/sys/devices/system/node/</code><br>
+				<code>read()</code> - retrieve NUMA information from the opened files<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">run a command with specifc NUMA node CPU and memory bind</td>
+			<td align="left"><code>numactl --membind=&lt;id&gt; --cpunodebind=&lt;id&gt; -- &lt;command&gt;</code></td>
+			<td align="left">
+				<code>sched_setaffinity()</code> - bind the current process to specific CPU cores (of a NUMA node)<br>
+				<code>set_mempolicy()</code> - bind the current process to specific memory (of a NUMA node)<br>
+				<code>execve()</code> - execute the nwq command (the numactl command will not create a subprocess to execute the new command)<br>
+			</td>
+			<td align="left">Process Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">cgexec</td>
+			<td align="middle">130</td>
+			<td align="middle" colspan="2">run the task in given control groups</td>
+			<td align="left"><code>sudo cgexec -g &lt;controllers&gt;:&lt;cgroup_name&gt; command</code></td>
+			<td align="left">
+				<code>openat()</code> - open <code>/proc/cgroups</code> and <code>/proc/mounts</code> which store 
+                the cgroups mount point information and the supported controllers<br>
+				<code>read()</code> - retrieve cgroup information from the opened files<br>
+				<code>openat()</code> - open <code>/sys/fs/cgroup/&lt;controllers&gt;/&lt;cgroup_name&gt;/tasks</code><br>
+				<code>write()</code> - write the pid of the current process to <code>/sys/fs/cgroup/&lt;controllers&gt;/&lt;cgroup_name&gt;/tasks</code>. 
+                This operation moves the current process (actually the thread) to the specified control group.<br>
+				<code>execve()</code> - execute the specified command<br>
+			</td>
+			<td align="left">
+                System Operation - Read (cgroup information)<br>
+                Process Operation - Modify (add to cgroup)
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">reset</td>
+			<td align="middle">129</td>
+			<td align="middle" colspan="2">terminal initialization</td>
+			<td align="left"><code>reset</code></td>
+			<td align="left">
+				<code>write()</code> - write a control sequence to the terminal which will reset the terminal<br>
+			</td>
+			<td align="left">
+                Device Operation - Modify (Terminals are devices)
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"><code>reset</code> is a link to <code>tset</code></td>
+		</tr>
+
+		<tr>
+			<td align="middle">postgres</td>
+			<td align="middle">126</td>
+			<td align="middle" colspan="2">run PostgreSQL database server</td>
+			<td align="left"><code>postgres</code></td>
+			<td align="left">
+				<code>clone()</code> & <code>execve()</code> - clone a subprocess to run PostgreSQL (<code>clone()</code> is invoked by the shell)<br>
+			</td>
+			<td align="left">
+                Process Operation - Create
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">column</td>
+			<td align="middle" rowspan="2">123</td>
+			<td align="middle" rowspan="2">formats the input into multiple columns</td>
+			<td align="middle">input from stdin</td>
+			<td align="left"><code>column</code> (input text then input ctrl+D)</td>
+			<td align="left">
+                ignored <code>stdin</code>/<code>stdout</code> read/write operations
+			</td>
+			<td align="left">Text Processing</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">input from file</td>
+			<td align="left"><code>column &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read the contents of the target file to format<br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">blkid</td>
+			<td align="middle">123</td>
+			<td align="middle" colspan="2">locate/print block device attributes</td>
+			<td align="left"><code>blkid</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store block device information, 
+                e.g., <code>/proc/partitions</code>, files under <code>/sys/dev/block</code><br>
+				<code>read()</code> - retrieve block device information from the opened files<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">file</td>
+			<td align="middle">122</td>
+			<td align="middle" colspan="2">determine file type</td>
+			<td align="left"><code>file &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>lstate()</code> - get file staus<br>
+				<code>openat()</code> - open the target file<br>
+				<code>read()</code> - read the contents of the file to get more information <br>
+			</td>
+			<td align="left">File Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">man</td>
+			<td align="middle">120</td>
+			<td align="middle" colspan="2">show manual pages</td>
+			<td align="left"><code>man &lt;manpagename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the man page file<br>
+				<code>read()</code> - read man page file contents<br>
+				<code>clone()</code> &amp; <code>execve()</code> - the man command relies on 
+                other commands, e.g., <code>pager</code>, <code>tbl</code>, and <code>nroff</code>, 
+                to display the manual page, so it needs to create subprocesses<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                Process Operation - Create <br>
+                Process Operation - Modify
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">pgrep</td>
+			<td align="middle">119</td>
+			<td align="middle" colspan="2">find all running processes whose name match a regex</td>
+			<td align="left"><code>pgrep &lt;pattern&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> &amp; <code>getdents64()</code> - open <code>/proc</code> and get 
+                all <code>/proc/&lt;pid&gt;</code> directories under <code>/proc</code> <br>
+				<code>openat()</code> - open <code>/proc/&lt;pid&gt;/stat</code> and <code>/proc/&lt;pid&gt;/cmdline</code> 
+                that store names of running processes<br>
+				<code>read()</code> - read the names of running processes for regex matching<br>
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">vgs</td>
+			<td align="middle">117</td>
+			<td align="middle" colspan="2">show information of volume groups</td>
+			<td align="left"><code>sudo vgs</code></td>
+			<td align="left">
+				You may notice that some files, e.g., <code>/run/lvm/hints</code> and files under 
+                <code>/etc/lvm</code>, contain volumn group information, and guess vgs will retrieve 
+                logical volume information from these files, but that's not the truth. Note the 
+                aforementioned files are not under <code>/proc</code>, <code>/sys</code> or <code>/dev</code>, 
+                which means they are not created by the kernel to expose kernel status to user space. 
+                In fact, these files are created and updated by user space programs like vgs. Now let's 
+                see how vgs retrieves volume group infomation. First, we will delete files under <code>/run/lvm</code> 
+                and <code>/etc/lvm</code> to make sure vgs does not rely on any information pre-generated information. <br>
+				<br>
+				Unlike logical volumes, volume groups are not virtual devices and thus do not have corresponding device files 
+                under <code>/dev</code> (please refer the table entry of lvs for more details about logical volumes). The 
+                only thing about a volume group under <code>/dev</code> is a directory that contains links to 
+                device files of logical volumes in the volume group. This means we can not retrieve any other information 
+                about a volume group (e.g., which physical volumes does the volume group contain) from <code>/dev</code>. 
+                Actually, the metadata of logical volumes are stored in the physical volumes, i.e., the 
+                physical devices. So in order to retrieve volume group information, vgs has to read data 
+                from the physical devices. The following system calls are used:<br>
+				<code>openat()</code> &amp; <code>getdents64()</code> - open <code>/dev</code> and get all files under it<br>
+				<code>stat()</code> &amp; <code></code>fstat()</code> - find device files under <code>/dev</code><br>
+				<code>openat()</code> - open the found device files, e.g., <code>/dev/sda1</code>, <code>/dev/sda2</code>, 
+                <code>/dev/loop1</code>, etc.<br>
+				<code>ioctl()</code> - use the <code>BLKGETSIZE64</code> request code to get the size of the device<br>
+				<code>io_submit()</code> - for each device file, use asynchronous read operation to get volume group metadata 
+                stored on them<br>
+			</td>
+			<td align="left">
+                Device Operation - Read 
+            </td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">gunzip</td>
+			<td align="middle">117</td>
+			<td align="middle" colspan="2">expand compressed files</td>
+			<td align="left"><code>gunzip &lt;gzfilename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the gzip file<br>
+				<code>read()</code> - read contents from the gzip file to decompress<br>
+				<code>openat()</code> - create the extracted file<br>
+				<code>write()</code> - write the decompressed data to the created file<br>
+				<code>fchmod()</code> &amp; <code>fchown()</code> - change the permissions and 
+                the owner of the created files<br>
+				<code>unlinkat()</code> - delete the gzfile<br>
+				<br>
+				Unlike zip, gzip can only compress one regular file (<a href="https://askubuntu.com/questions/1103018/gzip-2-files-into-one-file">https://askubuntu.com/questions/1103018/gzip-2-files-into-one-file</a>), 
+                so gunzip will only create one extracted file.<br>
+			</td>
+			<td align="left">
+                File Operation - Read <br>
+                File Operation - Create <br>
+                File Operation - Write <br>
+                File Operation - Delete
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">mpstat</td>
+			<td align="middle">114</td>
+			<td align="middle" colspan="2">report processors related statistics</td>
+			<td align="left"><code>mpstat</code></td>
+			<td align="left">
+				<code>openat()</code> - open files in <code>procfs</code> and <code>sysfs</code> that 
+                store processor related statistics, e.g., files under <code>/sys/devices/system/cpu</code>, 
+                <code>/proc/softirqs</code>, <code>/proc/interrupts</code>, etc.<br>
+				<code>read()</code> - retrieve information from the opened files<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">pip</td>
+			<td align="middle" rowspan="2">108</td>
+			<td align="middle" rowspan="2">A tool for installing and managing Python packages</td>
+			<td align="middle">install a package</td>
+			<td align="left"><code>pip install &lt;package&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> & <code>read()</code> - open <code>/etc/resolv.conf</code> and retrieve DNS resolver information <br>
+				<code>socket()</code> - create an UDP socket<br>
+				<code>connect()</code> - connect the UDP socket to the 53 port of the resolver<br>
+				<code>sendmmsg() & recvfrom()</code> - perform a DNS query to get the IP address of the pip package repository<br>
+				<br>
+				<code>socket()</code> - create a TCP socket<br>
+				<code>connect()</code> - connect to the package repository (443 port)<br>
+				<code>write() & read()</code> - send package download request & receive response<br>
+				<br>
+				<code>openat()</code> - create a temporary file (in a temporary directory under /tmp) to store the downloaded package data (in .tar.gz format)<br>
+				<code>write()</code> - write the downloaded content to the .tar.gz file<br>
+				<code>read()</code> - read the contents of the .tar.gz file to decompress<br>
+				<code>unlinkat()</code> - remove the temporary package file<br>
+				<br>
+				<code>mkdir() & openat()</code> - create directories and files for the package to be installed<br>
+				<code>write()</code> - write package files' contents to the created files<br>
+				<br>
+			</td>
+			<td align="left">None</td>
+			<td align="left">None</td>
+			<td align="left" rowspan="2"></td>
+		</tr>
+		<tr>
+			<td align="middle">uninstall a package</td>
+			<td align="left"><code>pip uninstall package</code></td>
+			<td align="left">
+				<code>rename()</code> - rename the package directory before deleting files<br>
+				<code>unlinkat()</code> - reamove package files<br>
+			</td>
+			<td align="left">None</td>
+			<td align="left">None</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">ipcs</td>
+			<td align="middle">106</td>
+			<td align="middle" colspan="2">show information on IPC facilities</td>
+			<td align="left"><code>ipcs</code></td>
+			<td align="left">
+				<code>openat()</code> - open files under <code>/proc/sysvipc/</code> that store IPC information<br>
+				<code>read()</code> - retrieve IPC information from the opened files<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">pvcreate</td>
+			<td align="middle">106</td>
+			<td align="middle" colspan="2">Initialize physical volume(s) for use by LVM</td>
+			<td align="left"><code>pvcreate device</code></td>
+			<td align="left">
+				The metadata of a physical volume is stored on the device [1]. So the creation of 
+                a physical volume is similar to formating a file system, both of which will 
+                write metadata to the devices.<br>
+				<br>
+				<code>openat()</code> - open the device file corresponding to the target device, 
+                e.g., <code>/dev/sda</code><br>
+				<code>io_submit()</code> - use asynchronous write operation to write physical volume 
+                metadata to the opened device <br>
+                <br>
+                [1] <a href="https://www.ufsexplorer.com/amp/articles/storage-technologies/lvm-data-organization/"> https://www.ufsexplorer.com/amp/articles/storage-technologies/lvm-data-organization/</a>
+			</td>
+			<td align="left">Device Operation - Modify</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">vmstat</td>
+			<td align="middle">106</td>
+			<td align="middle" colspan="2">report virtual memory statistics</td>
+			<td align="left"><code>vmstat</code></td>
+			<td align="left">
+				<code>openat()</code> - open files that store virtual memory 
+                statistics, e.g., <code>/proc/meminfo</code>, <code>/proc/stat</code>, 
+                <code>/proc/vmstat</code>, etc.<br>
+				<code>read()</code> - retrieve virtual memory information from the opened files.<br>
+			</td>
+			<td align="left">System Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">truncate</td>
+			<td align="middle">85</td>
+			<td align="middle" colspan="2">shrink or extend the size of a file to the specified size</td>
+			<td align="left"><code>truncate -s &lt;size&gt; &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the target file<br>
+				<code>ftruncate()</code> - truncate the file to a specific size<br>
+			</td>
+			<td align="left">File Operation - Write</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">gdb</td>
+			<td align="middle">77</td>
+			<td align="middle" colspan="2">The GNU Debugger</td>
+			<td align="left"><code>gdb &lt;program&gt;</code></td>
+			<td align="left">
+				<code>clone()</code> &amp; <code>execve()</code> - create a subprocess to run the target program<br>
+				<code>read()</code> - read user-input commands<br>
+				<code>ptrace()</code> - user-input commands are translated to <code>ptrace()</code> calls with specific 
+                request codes, e.g., an <code>si</code> command of gdb is translated to a <code>ptrace()</code> call 
+                with the <code>PTRACE_SINGLESTEP</code> request code<br>
+				<code>wait4()</code> - catch state change of the subprocess caused by <code>ptrace()</code><br>
+			</td>
+			<td align="left">
+                Process Operation - Create <br>
+                Process Operation - Modify
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">ifdown</td>
+			<td align="middle">66</td>
+			<td align="middle" colspan="2">take a network interface down</td>
+			<td align="left"><code>ifdown &lt;interface&gt;</code></td>
+			<td align="left">
+				<code>ifdown</code> is a shell script contained in the <code>network-scripts</code> package which 
+                is used by RHEL-based distributions for network configuration. The 
+                <code>network-scripts</code> package is deprecated in RHEL 8 and is not provided by 
+                default, but you can still install it manually 
+                (see <a href="https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/considerations_in_adopting_rhel_8/networking_considerations-in-adopting-rhel-8">https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/considerations_in_adopting_rhel_8/networking_considerations-in-adopting-rhel-8</a>). <br>
+				<br>
+				The <code>ifdown</code> script runs the <code>ip</code> command to take down an interface, 
+                please refer the table entry of <code>ip</code> command to obtain the key system calls.<br>
+			</td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left">tested on CentOS</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">strace</td>
+			<td align="middle">64</td>
+			<td align="middle" colspan="2">trace system calls and signals</td>
+			<td align="left"><code>strace &lt;command&gt;</code></td>
+			<td align="left">
+				<code>clone()</code> + <code>execve()</code> - create a child process to run the target command<br>
+				<code>ptrace()</code> + <code>wait4()</code> - trace the process<br>
+			</td>
+			<td align="left">
+                Process Operation - Create <br>
+                Process Operation - Modify
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">ipset</td>
+			<td align="middle" rowspan="2">61</td>
+			<td align="middle" rowspan="2">administration tool for IP sets</td>
+			<td align="middle">list ip sets</td>
+            <td align="left"><code>ipset list</code></td>
+			<td align="left">
+				<code>socket()</code> - create a netlink socket with <code>NETLINK_NETFILTER</code> family<br>
+				<code>bind()</code> - bind the netlink socket to a local port<br>
+				<code>sendto() / recvmsg()</code> - communicate with the IP set framework to list ip sets<br>
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2">ipset is the user-space utility program of the in-kernel IP set framework 
+                (<a href="https://ipset.netfilter.org/index.html">https://ipset.netfilter.org/index.html</a>). The IP set framework is an 
+                extension of the netfilter framework which solves the peformance overhead 
+                involved by netfilter when matching multiple IP addresses or port numbers. 
+                The IP set exposes an interface to user space with the <code>NETLINK_NETFILTER</code> 
+                netlink socket, which is used by the ipset utility to communicate with the 
+                IP set framework.</td>
+		</tr>
+            <td align="middle">create/modify ip sets</td>
+            <td align="left">
+                <code>ipset create &lt;range_set&gt; hash:net</code> <br>
+                <code>ipset add &lt;range_set&gt; &lt;ip_address&gt;</code>
+            </td>
+			<td align="left">
+				<code>socket()</code> - create a netlink socket with <code>NETLINK_NETFILTER</code> family<br>
+				<code>bind()</code> - bind the netlink socket to a local port<br>
+				<code>sendto() / recvmsg()</code> - communicate with the IP set create/modify ip sets<br>
+			</td>
+			<td align="left">Network Operation - Modify</td>
+			<td align="left">Modify</td>
+        <tr>
+
+        </tr>
+
+
+		<tr>
+			<td align="middle">ifup</td>
+			<td align="middle">59</td>
+			<td align="middle" colspan="2">bring up a network interface</td>
+			<td align="left"><code>ifup &lt;interface&gt;</code></td>
+			<td align="left">
+				<code>ifup</code> is a shell script contained in the <code>network-scripts</code> package which 
+                is used by RHEL-based distributions for network configuration. The 
+                <code>network-scripts</code> package is deprecated in RHEL 8 and is not provided by 
+                default, but you can still install it manually 
+                (see <a href="https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/considerations_in_adopting_rhel_8/networking_considerations-in-adopting-rhel-8">https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8/html/considerations_in_adopting_rhel_8/networking_considerations-in-adopting-rhel-8</a>). <br>
+				<br>
+				The <code>ifup</code> script runs the <code>ip</code> command to take down an interface, 
+                please refer the table entry of <code>ip</code> command to obtain the key system calls.<br>
+			</td>
+			<td align="left"></td>
+			<td align="left"></td>
+			<td align="left">tested on CentOS</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">insmod</td>
+			<td align="middle">48</td>
+			<td align="middle" colspan="2">load a module into the Linux Kernel</td>
+			<td align="left"><code>insmod &lt;kofilename&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the module file (ELF format)<br>
+				<code>finit_module()</code> - load the opened kernel module file (with the fd)<br>
+			</td>
+			<td align="left">System Operation - Modify</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">killall</td>
+			<td align="middle">45</td>
+			<td align="middle" colspan="2">kill processes by name</td>
+			<td align="left"><code>killall &lt;process_name&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> &amp; <code>getdents64()</code> - open <code>/proc</code> and 
+                get all <code>/proc/&lt;pid&gt;</code> directories under <code>/proc</code> <br>
+				<code>openat()</code> &amp; <code>read()</code> - read each 
+                <code>/proc/&lt;pid&gt;/stat</code> files which contain process names<br>
+				<code>kill()</code> - send a signal to processes that match the target name, 
+                the default signal is <code>SIGTERM</code><br>
+			</td>
+			<td align="left">
+                Process Operation - Read <br>
+                Process Operation - Modify 
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">nvme</td>
+			<td align="middle" rowspan="2">43</td>
+			<td align="middle" rowspan="2">NVMe management command line interface.</td>
+			<td align="middle">show NVMe device information</td>
+			<td align="left"><code>nvme list</code></td>
+			<td align="left">
+				<code>openat()</code> &amp; <code>getdents64()</code> - get all files under 
+                <code>/dev</code> to find potential NVMe device files<br>
+				<code>openat()</code> - open NVMe device files, e.g., <code>/dev/nvme0n1</code>, 
+                which will be passed as arguments to the subsequent <code>ioctl()</code><br>
+				<code>ioctl()</code> - use NVMe request codes, e.g., <code>NVME_IOCTL_ADMIN_CMD</code>, 
+                <code>NVME_IOCTL_ID</code>, to get device information<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2">This command is used to manage NVMe devices. However, none of the test servers I can find have a solid-state drive equipped. So I created a virtual machine using Virtual Box which equips a virtual NVMe solid-state drive to test this command.</td>
+		</tr>
+		<tr>
+			<td align="middle">manipulate NVMe devices</td>
+			<td align="left"><code>nvme set-feature &lt;device&gt; &lt;feature options&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the NVMe device to be configured<br>
+				<code>ioctl()</code> - use NVMe request codes, e.g., <code>NVME_IOCTL_ADMIN_CMD</code>, 
+                to manipulate the target NVMe device<br>
+			</td>
+			<td align="left">Device Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">whoami</td>
+			<td align="middle">40</td>
+			<td align="middle" colspan="2">print effective user name</td>
+			<td align="left"><code>whoami</code></td>
+			<td align="left">
+				<code>geteuid()</code> - get user identity<br>
+				<code>openat()</code> &amp; <code>read()</code> - open <code>/etc/passwd</code> and 
+                retrieve the mapping between user names and uids from it, which is used to 
+                convert the uid to the corresponding user name<br>
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle" rowspan="2">hdparm</td>
+			<td align="middle" rowspan="2">36</td>
+			<td align="middle" rowspan="2">get/set SATA/IDE device parameters</td>
+			<td align="middle">show SATA/IDE device information</td>
+			<td align="left"><code>hdparm -i &lt;device&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the file corresponding to the target device, 
+                e.g., <code>/dev/sda</code>, which will be passed as an argument to 
+                the subsequent <code>ioctl()</code><br>
+				<code>ioctl()</code> - use request codes like <code>SG_IO</code> and <code>HDIO_GET_IDENTITY</code> 
+                to retrieve device information<br>
+			</td>
+			<td align="left">Device Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left" rowspan="2">This command is used to get/set SATA/IDE device parameters. SATA/IDE devices run ATA commands. But all the test servers I found are equipped with SAS devices which run SCSI commands. So I created a virtual machine using Virtual Box which equips a virtual SATA hard disk drive to test this command.</td>
+		</tr>
+		<tr>
+			<td align="middle">manipulate SATA/IDE devices</td>
+			<td align="left"><code>hdparm &lt;option&gt; &lt;device&gt;</code></td>
+			<td align="left">
+				<code>openat()</code> - open the file corresponding to the target device, 
+                e.g., <code>/dev/sda</code>, which will be passed as an argument to the 
+                subsequent <code>ioctl()</code><br>
+				<code>ioctl()</code> - use request codes like <code>SG_IO</code> to manipulate the target device<br>
+			</td>
+			<td align="left">Device Operation - Modify</td>
+			<td align="left">Modify</td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">tee</td>
+			<td align="middle">36</td>
+			<td align="middle" colspan="2">read data from standard input and output it to both standard output and one or more files</td>
+			<td align="left"><code>tee &lt;filename&gt;</code> (input text then input ctrl+D)</td>
+			<td align="left">
+				<code>openat()</code> - open the target output file<br>
+				<code>read()</code> - read user input from stdin<br>
+				<code>write()</code> - write the input from stdin to the target file<br>
+			</td>
+			<td align="left">File Operation - Write</td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">zmore</td>
+			<td align="middle">32</td>
+			<td align="middle" colspan="2">file perusal filter for crt viewing of compressed text</td>
+			<td align="left"><code>zmore &lt;filename&gt;</code></td>
+			<td align="left">
+				<code>clone()</code> &amp; <code>execve()</code> - create a subprocess to execue the <code>gzip</code> command (<code>gzip -cdfq file_name</code>) to decompress the gzip file<br>
+				<code>clone()</code> &amp; <code>execve()</code> - create a subprocess to execue the <code></code> command<br>
+				<code>pipe()</code> &amp; <code>dup()</code> - inter-process communication between <code>gzip</code> and <code>more</code><br>
+				<br>
+				For system calls invoked by <code>gzip</code>/<code>more</code>, please refer their table entries.<br>
+			</td>
+			<td align="left">
+                Process Operstion - Create <br>
+                File Operation - Read (gzip) <br>
+                Text Processing (more)
+            </td>
+			<td align="left">Modify</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">pstree</td>
+			<td align="middle">31</td>
+			<td align="middle" colspan="2">display a tree of processes</td>
+			<td align="left"><code>pstree -p</code></td>
+			<td align="left">
+				<code>openat()</code> - open files under <code>/proc/&lt;pid&gt;</code> that store the information of each process<br>
+				<code>read()</code> - get process information from the opened files<br>
+			</td>
+			<td align="left">Process Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+
+		<tr>
+			<td align="middle">iftop</td>
+			<td align="middle">31</td>
+			<td align="middle" colspan="2">display bandwidth usage on an interface</td>
+			<td align="left"><code>sudo iftop -i &lt;interface&gt;</code></td>
+			<td align="left">
+				<code>socket()</code> - create an <code>AF_PACKET</code> socket to receive raw packets<br>
+				<code>bind()</code> - bind the socket to the interface to capture packets on that interface<br>
+				<code>setsockopt()</code> &amp; <code>mmap()</code> - use <code>PACKET_RX_RING</code> to enable packet mmap which means the captured packets can be accessed by reading memory instead of issuing a system call<br>
+				<code>setsockopt()</code> - use the <code>SO_ATTACH_FILTER</code> to attach a filter to the socket<br>
+				<br>
+				The bandwidth is calculated based on the captured packets.<br>
+			</td>
+			<td align="left">Network Operation - Read</td>
+			<td align="left">Read-only</td>
+			<td align="left"></td>
+		</tr>
+
+    </table>
+    </div>
+
+</body>
+</html>
