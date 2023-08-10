@@ -50,15 +50,15 @@
         <li>All commands are tested on Ubuntu 20.04 unless otherwise specified.</li>
         <li>
             We igonre all read operations from <code>stdin</code> and all write operations to <code>stdout</code> 
-            when analyzing the core system calls of each command.
+            when analyzing the key system calls of each command.
             Because in normal cases, the file types of <code>stdin</code> and <code>stdout</code> are terminal devices, pipes, or 
             regular files. We do not care about read/write operations from/to terminals and pipes, and read/write 
             operations from/to files will be catched because <code>Agith</code> monitors file operation system calls.
             So ignoring read operations from <code>stdin</code> and write operations to <code>stdout</code> when 
-            analyzing the core system calls of a command will not result in the missing of any system calls that should 
+            analyzing the key system calls of a command will not result in the missing of any system calls that should 
             be monitored. There are some text processing commands, e.g., <code>grep</code>, whose workflow is
             reading text from <code>stdin</code>, processing the text, and writing the processed result
-            to <code>stdout</code>. For such commands, their "Core System Call(s)" columes are filled with
+            to <code>stdout</code>. For such commands, their "Key System Call(s)" columes are filled with
             "Ignored <code>stdin</code>/<code>stdout</code> read/write operations", their operation type is 
             Text Processing, and their System Impact is None.
         </li>
@@ -129,7 +129,7 @@
             <th align="middle">Frequency</th>
             <th align="middle" colspan="2">Functionality (Sub-Functionality)</th>
             <th align="middle">Command Pattern of Core Functionality</th>
-            <th align="middle">Core System Call(s)</th>
+            <th align="middle">Key System Call(s)</th>
             <th align="middle">Operation Type</th>
             <th align="middle">System Impact</th>
             <th align="middle">Comments</th>
